@@ -167,8 +167,8 @@ export function TicketDetail({ admin, id }: { admin: boolean; id: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const listPath = admin ? '/admin/tickets' : '/tickets';
-  const base = `${listPath}/${id}`;
+  const listPath = admin ? '/admin/tickets' : '/console/tickets';
+  const base = `${admin ? '/admin/tickets' : '/tickets'}/${id}`;
   const bottom = useRef<HTMLDivElement>(null);
   const detail = useQuery({ queryKey: ['tickets', 'detail', admin, id], queryFn: () => api.get<TicketDetailDTO>(base), refetchInterval: 15_000 });
   const count = detail.data?.messages.length ?? 0;
@@ -306,7 +306,7 @@ export function TicketDetail({ admin, id }: { admin: boolean; id: string }) {
               )}
               {ticket.resourceRef && (
                 <InfoRow label={t('ticket.resource')}>
-                  <Link to={`${admin ? '/admin' : ''}/instances/${ticket.resourceRef}`} className="break-all underline-offset-2 hover:underline">
+                  <Link to={`${admin ? '/admin' : '/console'}/instances/${ticket.resourceRef}`} className="break-all underline-offset-2 hover:underline">
                     {ticket.resourceName || `#${ticket.resourceRef}`}
                   </Link>
                 </InfoRow>

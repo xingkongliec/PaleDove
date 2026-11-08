@@ -1,15 +1,25 @@
 import type { Role } from './enums';
 
+export const LEGACY_CONSOLE_PATHS = [
+  '/dashboard', '/instances', '/vpc', '/billing', '/invoices', '/invite', '/account',
+  '/terminal', '/docs/api', '/transfer', '/activity', '/notifications', '/tickets',
+] as const;
+
+/** 旧控制台页面的规范地址；只匹配完整路径段，不处理 API 与公开页面。 */
+export function consoleRedirect(pathname: string): string | null {
+  return LEGACY_CONSOLE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`)) ? `/console${pathname}` : null;
+}
+
 /** 登录后只能返回当前角色所属的后台。 */
 export function loginLanding(role: Role, next?: string | null): string {
-  const fallback = role === 'ADMIN' ? '/admin' : '/dashboard';
+  const fallback = role === 'ADMIN' ? '/admin' : '/console/dashboard';
   if (!next?.startsWith('/') || next.startsWith('//') || /[\\\u0000-\u0020]/.test(next)) return fallback;
   try {
     const url = new URL(next, 'https://paledove.local');
     const path = decodeURIComponent(url.pathname);
     const adminPath = /^\/admin(?:\/|$)/.test(path);
     if (adminPath !== (role === 'ADMIN') || path === '/login' || path === '/verify-email') return fallback;
-    return url.pathname + url.search + url.hash;
+    return (consoleRedirect(url.pathname) ?? url.pathname) + url.search + url.hash;
   } catch {
     return fallback;
   }

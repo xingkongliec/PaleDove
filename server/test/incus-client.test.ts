@@ -68,6 +68,10 @@ describe('HttpIncusClient', () => {
         const route = `${req.method} ${url.pathname}`;
         let r: { status: number; headers: Record<string, string>; body: unknown };
         if (route === 'GET /1.0') r = sync({ auth: 'trusted', api_extensions: ['instances_rebuild'], environment: { server_version: '6.0' } });
+        else if (route === 'GET /1.0/networks/incus%20bridge/leases') r = sync([
+          { hostname: 'stopped-instance', address: '10.88.255.254', hwaddr: '00:16:3e:00:00:01', type: 'static' },
+          { hostname: 'dhcp-instance', address: '10.88.255.253', hwaddr: '00:16:3e:00:00:02', type: 'dynamic' },
+        ]);
         else if (route === 'GET /1.0/instances/c1') r = sync(instance, { etag });
         else if (route === 'GET /1.0/instances/missing')
           r = { status: 404, headers: {}, body: { type: 'error', error: 'Instance not found', error_code: 404 } };
@@ -162,6 +166,14 @@ describe('HttpIncusClient', () => {
     await c.setState('c1', 'start');
     expect(seen.some((s) => s.url.startsWith('/1.0/operations/okop/wait?timeout=') && s.url.includes('project=shop'))).toBe(true);
     await expect(c.setState('c1', 'stop')).rejects.toThrow('The instance is already stopped');
+    await c.close();
+  });
+
+  it('reads static reservations and DHCP leases from the configured network and project', async () => {
+    const c = make();
+    const leases = await c.getNetworkLeases('incus bridge');
+    expect(seen.at(-1)?.url).toBe('/1.0/networks/incus%20bridge/leases?project=shop');
+    expect(leases.map((lease) => [lease.address, lease.type])).toEqual([['10.88.255.254', 'static'], ['10.88.255.253', 'dynamic']]);
     await c.close();
   });
 

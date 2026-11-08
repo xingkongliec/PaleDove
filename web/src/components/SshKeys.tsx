@@ -293,7 +293,7 @@ export function SshKeyField({ selected, onSelected, extra, onExtra, className }:
           {me?.role !== 'ADMIN' && (
             <>
               {' '}
-              <Link to="/account?tab=ssh" className="text-fg underline underline-offset-2">
+              <Link to="/console/account?tab=ssh" className="text-fg underline underline-offset-2">
                 {t('sshKeys.manage')}
               </Link>
             </>

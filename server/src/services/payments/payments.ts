@@ -285,7 +285,7 @@ export async function createPayment(
 }
 
 /** 支付结果页（网关付款完成 / 取消后跳回） */
-const backUrl = (base: string, p: Payment, canceled = false) => `${base}/billing?payment=${p.no}${canceled ? '&canceled=1' : ''}`;
+const backUrl = (base: string, p: Payment, canceled = false) => `${base}/console/billing?payment=${p.no}${canceled ? '&canceled=1' : ''}`;
 
 /** 向订单的渠道发起支付，返回前端要执行的动作（跳转 / 提交表单 / 二维码 / 页面） */
 async function startPayment(p: Payment, ctx: { name: string; email: string; base: string; clientIp: string; device: 'pc' | 'mobile' }): Promise<PayActionDTO> {

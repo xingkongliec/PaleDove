@@ -160,7 +160,7 @@ export async function nodeInstallScript(node: Node, token: string, panelUrl: str
     ipv6Parent: node.ipv6Parent,
     panelCert: cert,
     // 每次下载安装脚本都签发新的一次性 Agent 安装令牌（参考 incudal），脚本里不出现长期密钥
-    agentInstallToken: node.installAgent ? (await issueAgentInstallToken(node.id)).token : undefined,
+    agentInstallToken: (await issueAgentInstallToken(node.id)).token,
     installAgent: node.installAgent,
     installFirewall: node.installFirewall,
     enableFirewallRules: node.enableFirewallRules,
@@ -178,6 +178,14 @@ export interface RegisterNodeInput {
   /** 脚本检测到的宿主机全局 IPv6（带前缀，例如 2001:db8::5/64）与所在网卡 */
   ipv6Address?: string;
   ipv6Interface?: string;
+  /** 终端交互后读取的实际存储与组件配置；旧脚本可以省略。 */
+  storagePool?: string;
+  storageDriver?: (typeof STORAGE_DRIVERS)[number];
+  storageSource?: string;
+  storageSize?: string;
+  installAgent?: boolean;
+  installFirewall?: boolean;
+  enableFirewallRules?: boolean;
 }
 
 /** IPv6 模式下尚未填写子网时，用脚本检测到的地址前缀作为子网 */
@@ -202,6 +210,13 @@ export async function registerNode(
     where: { id: node.id },
     data: {
       ...ipv6,
+      ...(input.storagePool !== undefined ? { storagePool: input.storagePool } : {}),
+      ...(input.storageDriver !== undefined ? { storageDriver: input.storageDriver } : {}),
+      ...(input.storageSource !== undefined ? { storageSource: input.storageSource || null } : {}),
+      ...(input.storageSize ? { storageSize: input.storageSize } : {}),
+      ...(input.installAgent !== undefined ? { installAgent: input.installAgent } : {}),
+      ...(input.installFirewall !== undefined ? { installFirewall: input.installFirewall } : {}),
+      ...(input.enableFirewallRules !== undefined ? { enableFirewallRules: input.enableFirewallRules } : {}),
       endpoint: node.endpoint || buildEndpoint(input.publicIp, input.port),
       serverFingerprint: normalizeFingerprint(input.fingerprint),
       publicIp: node.publicIp || (isIPv4(input.publicIp) ? input.publicIp : ''),

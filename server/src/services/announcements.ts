@@ -19,7 +19,7 @@ export async function emailAnnouncement(a: { title: string; content: string }, b
       const locale = mailLocale(user.locale);
       const key = `${locale}:${user.role}`;
       if (!rendered.has(key)) {
-        const url = `${baseUrl.replace(/\/+$/, '')}${user.role === 'ADMIN' ? '/admin' : '/dashboard'}`;
+        const url = `${baseUrl.replace(/\/+$/, '')}${user.role === 'ADMIN' ? '/admin' : '/console/dashboard'}`;
         rendered.set(key, await renderMail({ title: a.title, preheader: a.content.slice(0, 120), body: p(escLines(a.content)) + button(url, translate(locale, 'announcement.view'), locale), footer: translate(locale, 'announcement.mailFooter'), locale, baseUrl }));
       }
       await sendMail(user.email, `【${site.siteName}】${a.title}`, rendered.get(key)!).catch((error) => console.error('announcement email failed', error));

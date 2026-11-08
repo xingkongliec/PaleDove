@@ -204,7 +204,7 @@ export default function MyListings() {
       mobile: 'title',
       cell: (l) => (
         <div className="min-w-0">
-          <Link to={`/instances/${l.instanceId}`} className="font-medium text-fg hover:underline">
+          <Link to={`/console/instances/${l.instanceId}`} className="font-medium text-fg hover:underline">
             {l.hostname}
           </Link>
           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-fg-3">

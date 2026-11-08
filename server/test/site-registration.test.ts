@@ -199,11 +199,12 @@ describe('site settings and registration', () => {
     expect(loginLanding('ADMIN', '/billing?topup=1')).toBe('/admin');
     expect(loginLanding('ADMIN', '/store?plan=1')).toBe('/admin');
     expect(loginLanding('ADMIN', '/admin/settings?tab=mail')).toBe('/admin/settings?tab=mail');
-    expect(loginLanding('USER', '/admin/settings')).toBe('/dashboard');
-    expect(loginLanding('USER', '/instances/1?tab=monitor')).toBe('/instances/1?tab=monitor');
+    expect(loginLanding('USER', '/admin/settings')).toBe('/console/dashboard');
+    expect(loginLanding('USER', '/instances/1?tab=monitor')).toBe('/console/instances/1?tab=monitor');
+    expect(loginLanding('USER', '/console/invoices/2?payment=success#details')).toBe('/console/invoices/2?payment=success#details');
     expect(loginLanding('ADMIN', '/admin/../store')).toBe('/admin');
     for (const next of ['//example.com', '/\\example.com', '/login', 'https://example.com', '/%61dmin/settings']) {
-      expect(loginLanding('USER', next)).toBe('/dashboard');
+      expect(loginLanding('USER', next)).toBe('/console/dashboard');
     }
   });
 
@@ -414,7 +415,7 @@ describe('site settings and registration', () => {
     expect(message.html).not.toContain('<script>ticket</script>'); expect(message.text).toContain(`/admin/tickets/${id}`);
     await request({ method: 'POST', url: `/api/admin/tickets/${id}/messages`, headers: { cookie: adminCookie }, payload: { content: 'Support reply' } });
     await vi.waitFor(() => expect(delivered.findLast((mail) => mail.to === 'member@example.com')?.text).toContain('Support reply'));
-    expect(delivered.findLast((mail) => mail.to === 'member@example.com')!.text).toContain(`/tickets/${id}`);
+    expect(delivered.findLast((mail) => mail.to === 'member@example.com')!.text).toContain(`/console/tickets/${id}`);
     const before = delivered.length;
     expect((await request({ method: 'POST', url: `/api/tickets/${id}/messages`, headers: { cookie: otherCookie }, payload: { content: 'Unauthorized' } })).statusCode).toBe(404);
     expect(delivered).toHaveLength(before);

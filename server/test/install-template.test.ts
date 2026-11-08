@@ -83,6 +83,28 @@ describe('install template refresh', () => {
     expect(agentSetupSection(options.panelUrl)).toContain('# updated shared Agent section');
   });
 
+  it('refreshes the interactive Incus menu on the next download', () => {
+    const path = join(files.directory, 'install-ui.sh');
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, original + '\n# updated interactive menu\n');
+    try {
+      expect(renderNodeInstallScript(options)).toContain('# updated interactive menu');
+    } finally {
+      writeFileSync(path, original);
+    }
+  });
+
+  it('refreshes node removal in both the installer and its embedded maintenance command', () => {
+    const path = join(files.directory, 'node-uninstall.sh');
+    const original = readFileSync(path, 'utf8');
+    writeFileSync(path, original + '\n# updated node removal\n');
+    try {
+      expect(renderNodeInstallScript(options).match(/# updated node removal/g)).toHaveLength(2);
+    } finally {
+      writeFileSync(path, original);
+    }
+  });
+
   it('keeps inserted shell values literal and never expands placeholders inside them', () => {
     const token = "pdi_$&_$'_$(touch unexpected)_@@PALEDOVE_PANEL_URL@@";
     const script = renderAgentInstallScript({ panelUrl: options.panelUrl, installToken: token });

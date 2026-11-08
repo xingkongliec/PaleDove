@@ -77,6 +77,7 @@ export function TicketList({ admin }: { admin: boolean }) {
   const t = useT();
   const { data: site } = usePublicConfig();
   const base = admin ? '/admin/tickets' : '/tickets';
+  const listPath = admin ? base : '/console/tickets';
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   // 管理员默认看待处理
@@ -101,7 +102,7 @@ export function TicketList({ admin }: { admin: boolean }) {
   };
   const create =
     !admin && site?.allowTickets ? (
-      <LinkButton to="/tickets/new" variant="primary" icon={<Plus />}>
+      <LinkButton to="/console/tickets/new" variant="primary" icon={<Plus />}>
         {t('ticket.new')}
       </LinkButton>
     ) : undefined;
@@ -185,7 +186,7 @@ export function TicketList({ admin }: { admin: boolean }) {
         ) : (
           <ul className={cn('divide-y divide-line transition-opacity', list.isPlaceholderData && 'opacity-60')}>
             {items.map((ticket) => (
-              <TicketRow key={ticket.id} ticket={ticket} admin={admin} to={`${base}/${ticket.id}`} />
+              <TicketRow key={ticket.id} ticket={ticket} admin={admin} to={`${listPath}/${ticket.id}`} />
             ))}
           </ul>
         )}

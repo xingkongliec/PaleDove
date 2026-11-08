@@ -148,7 +148,7 @@ export function HostStatusCard({ node, res }: { node: NodeDTO; res: UseQueryResu
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-[15px] font-semibold text-fg">{t('nodeDetail.host.title')}</h3>
             {r && status !== 'none' && (
-              <Badge tone={status === 'online' ? 'success' : 'neutral'} dot pulse={status === 'online'}>
+              <Badge tone={status === 'online' ? 'success' : 'neutral'} dot>
                 {t(status === 'online' ? 'nodeDetail.host.online' : 'nodeDetail.host.offline')}
               </Badge>
             )}

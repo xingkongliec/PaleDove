@@ -70,7 +70,7 @@ function DetailDialog({ record, onClose }: { record: TransferRecordDTO | null; o
               <Section title={t('transferPage.secInstance')}>
                 <Item label={t('transferPage.hostname')}>
                   {r.accessible ? (
-                    <Link to={`/instances/${r.instanceId}`} className="font-medium underline decoration-line-strong underline-offset-4 hover:decoration-fg">
+                    <Link to={`/console/instances/${r.instanceId}`} className="font-medium underline decoration-line-strong underline-offset-4 hover:decoration-fg">
                       {r.hostname}
                     </Link>
                   ) : (
@@ -200,7 +200,7 @@ export default function TransferPage() {
                     <span className="flex items-center gap-1.5">
                       {r.spec.country && <CountryFlag code={r.spec.country} className="h-2.5 w-3.5 shrink-0" />}
                       {r.accessible ? (
-                        <Link to={`/instances/${r.instanceId}`} className="truncate font-mono text-[13px] font-medium text-fg hover:underline hover:underline-offset-4">
+                        <Link to={`/console/instances/${r.instanceId}`} className="truncate font-mono text-[13px] font-medium text-fg hover:underline hover:underline-offset-4">
                           {r.hostname}
                         </Link>
                       ) : (

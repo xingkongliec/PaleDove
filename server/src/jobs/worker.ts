@@ -1,7 +1,6 @@
 import { DelayedError, Worker } from 'bullmq';
 import type { FastifyBaseLogger } from 'fastify';
 import { config } from '../config.ts';
-import { errorMessage } from '../lib/errors.ts';
 import { prisma } from '../lib/prisma.ts';
 import { acquireLock, redis } from '../lib/redis.ts';
 import { alignLegacyTrafficResets, checkNodes, collectAllNodes, runExpiryChecks, runTrafficResets } from '../services/lifecycle.ts';
@@ -75,6 +74,7 @@ async function runCronJob(name: string, log: CronLog): Promise<unknown> {
 }
 
 export async function startWorkers(log: FastifyBaseLogger): Promise<() => Promise<void>> {
+  log = log.child({ scope: 'WORKER' });
   // 上次进程退出时仍在执行的任务已中断（执行锁已过期/不存在），标记为失败；排队中的任务会被 BullMQ 继续执行
   const running = await prisma.task.findMany({ where: { status: 'RUNNING' } });
   for (const t of running) {
@@ -93,7 +93,7 @@ export async function startWorkers(log: FastifyBaseLogger): Promise<() => Promis
     if (t.instanceId && (t.type === 'MIGRATE' || t.type === 'SWITCH_NODE')) {
       await prisma.instance.update({ where: { id: t.instanceId }, data: { status: 'ERROR', lastError: tr('migrate.interrupted') } });
     }
-    log.warn(`task #${t.id} marked as failed after restart`);
+    log.warn({ taskId: t.id }, '重启前未完成的任务已标记为失败');
   }
 
   // 补发数据库中排队但不在队列里的任务（例如 Redis 数据丢失；内存队列在重启后总是为空）
@@ -103,12 +103,12 @@ export async function startWorkers(log: FastifyBaseLogger): Promise<() => Promis
   }
 
   const cronLog: CronLog = {
-    info: (m: string) => log.info(m),
-    warn: (m: string) => log.warn(m),
+    info: (m: string) => log.info({ scope: 'CRON' }, m),
+    warn: (m: string) => log.warn({ scope: 'CRON' }, m),
   };
-  await alignLegacyTrafficResets(cronLog).catch((err) => log.warn(`align traffic resets failed: ${errorMessage(err)}`));
+  await alignLegacyTrafficResets(cronLog).catch((err) => log.warn({ scope: 'CRON', err }, '对齐流量重置时间失败'));
   const stop = memoryTaskQueue ? startMemoryWorkers(memoryTaskQueue, log, cronLog) : await startBullWorkers(log, cronLog);
-  log.info(memoryTaskQueue ? 'background workers started (in-memory queue)' : 'background workers started');
+  log.debug({ concurrency: config.WORKER_CONCURRENCY, schedulerCount: CRON_JOBS.length }, '后台任务与定时调度已就绪');
   return stop;
 }
 
@@ -123,7 +123,7 @@ async function startBullWorkers(log: FastifyBaseLogger, cronLog: CronLog): Promi
     },
     { connection: queueConnection(), concurrency: config.WORKER_CONCURRENCY, lockDuration: 120_000 },
   );
-  taskWorker.on('failed', (job, err) => log.error(`task job failed ${job?.id}: ${err.message}`));
+  taskWorker.on('failed', (job, err) => log.error({ scope: 'TASK', taskId: job?.data.taskId, err }, '实例任务执行失败'));
 
   const cronQueue = getCronQueue();
   for (const job of CRON_JOBS) {
@@ -135,7 +135,7 @@ async function startBullWorkers(log: FastifyBaseLogger, cronLog: CronLog): Promi
       try {
         return await runCronJob(job.name, cronLog);
       } catch (err) {
-        log.error(`cron job ${job.name} failed: ${errorMessage(err)}`);
+        log.error({ scope: 'CRON', job: job.name, err }, '定时任务执行失败');
         throw err;
       }
     },
@@ -150,7 +150,7 @@ async function startBullWorkers(log: FastifyBaseLogger, cronLog: CronLog): Promi
 /** 内存模式：进程内队列执行任务，定时任务用定时器驱动（启动后立即执行一次，同一定时任务不重叠执行） */
 function startMemoryWorkers(queue: MemoryTaskQueue, log: FastifyBaseLogger, cronLog: CronLog): () => Promise<void> {
   queue.start(processTask, config.WORKER_CONCURRENCY, (taskId, err) =>
-    log.error(`task job failed task-${taskId}: ${errorMessage(err)}`),
+    log.error({ scope: 'TASK', taskId, err }, '实例任务执行失败'),
   );
 
   const running = new Map<string, Promise<void>>();
@@ -158,7 +158,7 @@ function startMemoryWorkers(queue: MemoryTaskQueue, log: FastifyBaseLogger, cron
     if (running.has(name)) return;
     const run = runCronJob(name, cronLog)
       .then(() => undefined)
-      .catch((err) => log.error(`cron job ${name} failed: ${errorMessage(err)}`))
+      .catch((err) => log.error({ scope: 'CRON', job: name, err }, '定时任务执行失败'))
       .finally(() => running.delete(name));
     running.set(name, run);
   };

@@ -199,6 +199,15 @@ export interface IncusNetwork {
   config: IncusConfig;
 }
 
+/** 包含停止实例的静态预留地址，以及当前 DHCP 租约。 */
+export interface IncusNetworkLease {
+  hostname: string;
+  address: string;
+  hwaddr: string;
+  type: 'static' | 'dynamic' | 'gateway' | 'uplink';
+  location?: string;
+}
+
 export interface IncusOperation {
   id: string;
   class: string;
@@ -244,6 +253,7 @@ export interface IncusApi {
   createStoragePool(req: IncusStoragePoolCreate): Promise<void>;
   deleteStoragePool(name: string): Promise<void>;
   getNetwork(name: string): Promise<IncusNetwork>;
+  getNetworkLeases(name: string): Promise<IncusNetworkLease[]>;
   createNetwork(req: IncusNetworkCreate): Promise<void>;
   deleteNetwork(name: string): Promise<void>;
   getNetworkState(name: string): Promise<IncusNetworkState>;

@@ -10,6 +10,7 @@ import { ZodError } from 'zod';
 import { config } from './config.ts';
 import { IncusError } from './incus/types.ts';
 import { AppError } from './lib/errors.ts';
+import { CompactLogController, createLoggerOptions, registerRequestLogging } from './lib/logger.ts';
 import { isMessageKey, runWithLocale, t } from './i18n/index.ts';
 import { DEFAULT_LOCALE, normalizeLocale } from './shared/index.ts';
 import { Prisma } from './lib/prisma.ts';
@@ -49,12 +50,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     trustProxy: config.TRUST_PROXY,
     bodyLimit: 1024 * 1024,
-    logger: {
-      level: config.LOG_LEVEL,
-      ...(config.isProd ? {} : { transport: { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } } }),
-      redact: ['req.headers.cookie', 'req.headers.authorization'],
-    },
+    logger: createLoggerOptions(config),
+    logController: new CompactLogController(),
   });
+  registerRequestLogging(app, config.LOG_REQUESTS);
 
   // 请求语言：x-locale 请求头 > 用户偏好（会话插件中应用）> Accept-Language > 默认。须先于其他插件注册
   app.addHook('onRequest', (req, _reply, done) => {
@@ -103,7 +102,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       if (err.code === 'P2003') return reply.status(409).send({ error: 'CONFLICT', message: t('err.relationExists') });
     }
     if (err instanceof IncusError) {
-      req.log.warn({ err }, 'incus request failed');
+      req.log.warn({ scope: 'INCUS', err }, '节点请求失败');
       return reply.status(502).send({ error: 'INCUS_ERROR', message: t('err.incus', { message: err.message }) });
     }
     const status = (err as FastifyError).statusCode;
@@ -111,7 +110,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (status && status >= 400 && status < 500) {
       return reply.status(status).send({ error: (err as FastifyError).code ?? 'BAD_REQUEST', message: err.message });
     }
-    req.log.error({ err }, 'unhandled error');
+    req.log.error({ scope: 'HTTP', err }, '请求处理异常');
     return reply.status(500).send({ error: 'INTERNAL', message: t('err.internal') });
   });
 
@@ -174,7 +173,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       if (/\.[a-z0-9]+$/i.test(path)) return reply.status(404).type('text/plain').send('Not Found');
       return reply.header('cache-control', 'no-cache').sendFile('index.html');
     });
-    app.log.info(`serving web assets from ${webDist}`);
+    app.log.debug({ scope: 'WEB', directory: webDist }, '前端静态资源已就绪');
   } else {
     app.setNotFoundHandler((_req, reply) => reply.status(404).send({ error: 'NOT_FOUND', message: t('err.routeNotFound') }));
   }

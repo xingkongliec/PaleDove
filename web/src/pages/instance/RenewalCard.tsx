@@ -56,7 +56,7 @@ export function RenewalCard({ inst }: { inst: AnyInstance }) {
     onSuccess: (r) => {
       toast.success(t('invoice.created'), r.invoice.no);
       setCoupon(null);
-      navigate('/invoices');
+      navigate('/console/invoices');
     },
     onError: (error) => toast.fromError(error, t('settings.renewFailed')),
   });

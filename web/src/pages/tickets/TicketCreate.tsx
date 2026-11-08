@@ -79,7 +79,7 @@ export function TicketCreate() {
     onSuccess: (ticket) => {
       void qc.invalidateQueries({ queryKey: ['tickets'] });
       toast.success(t('ticket.created'));
-      navigate(`/tickets/${ticket.id}`);
+      navigate(`/console/tickets/${ticket.id}`);
     },
     onError: (error) => toast.fromError(error),
   });
@@ -88,7 +88,7 @@ export function TicketCreate() {
 
   return (
     <div>
-      <PageHeader title={t('ticket.new')} description={t('ticket.createDesc')} back={{ to: '/tickets', label: t('ticket.back') }} />
+      <PageHeader title={t('ticket.new')} description={t('ticket.createDesc')} back={{ to: '/console/tickets', label: t('ticket.back') }} />
       {site?.allowTickets === false ? (
         <Alert>{t('ticket.disabled')}</Alert>
       ) : (
@@ -140,7 +140,7 @@ export function TicketCreate() {
                 </FormField>
               </fieldset>
               <div className="flex justify-end gap-2 border-t border-line bg-surface-2/40 px-4 py-3 sm:px-5">
-                <LinkButton to="/tickets">{t('ticket.cancel')}</LinkButton>
+                <LinkButton to="/console/tickets">{t('ticket.cancel')}</LinkButton>
                 <Button type="submit" variant="primary" icon={<SendHorizontal />} loading={busy} disabled={!valid}>
                   {t('ticket.new')}
                 </Button>

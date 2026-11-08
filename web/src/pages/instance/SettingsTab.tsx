@@ -59,7 +59,7 @@ export default function SettingsTab({ inst, admin = false }: { inst: AnyInstance
     onSuccess: () => {
       toast.success(t('settings.deleteSubmitted'), t('settings.deleteSubmittedDesc'));
       invalidate();
-      navigate(admin ? '/admin/instances' : '/instances');
+      navigate(admin ? '/admin/instances' : '/console/instances');
     },
     onError: (e) => toast.fromError(e),
   });

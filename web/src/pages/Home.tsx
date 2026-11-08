@@ -441,7 +441,7 @@ export default function HomePage() {
   const siteName = cfg?.siteName ?? 'PaleDove';
   const allowRegister = cfg?.allowRegister ?? true;
   const isAdmin = me?.role === 'ADMIN';
-  const consoleHref = me ? (isAdmin ? '/admin' : '/dashboard') : null;
+  const consoleHref = me ? (isAdmin ? '/admin' : '/console/dashboard') : null;
   const consoleLabel = isAdmin ? t('shell.adminConsole') : t('home.nav.console');
   const entryHref = isAdmin ? '/admin' : '/store';
   // 游客也可以直接进入购买页选配置，付款时再登录 / 注册

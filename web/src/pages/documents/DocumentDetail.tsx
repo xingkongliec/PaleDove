@@ -85,7 +85,7 @@ export default function DocumentDetail() {
         </article>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-2/60 p-4 sm:px-5">
           <div className="flex items-center gap-3"><LifeBuoy className="size-5 shrink-0 text-fg-3" aria-hidden /><p className="text-[13px] text-fg-2">{t('documents.questions')}</p></div>
-          <Link to="/tickets/new" className={buttonClass('secondary', 'sm')}>{t('legal.contact')}</Link>
+          <Link to="/console/tickets/new" className={buttonClass('secondary', 'sm')}>{t('legal.contact')}</Link>
         </div>
       </div>
       {toc.length > 0 && <aside className="sticky top-[calc(var(--header-h)+1.5rem)] hidden min-w-0 rounded-xl border border-line bg-surface-2/50 p-3 xl:block">

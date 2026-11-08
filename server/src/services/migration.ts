@@ -5,8 +5,8 @@ import { badRequest, conflict, errorMessage } from '../lib/errors.ts';
 import { prisma, Prisma, type Instance, type IpAddress, type Node, type PortMapping } from '../lib/prisma.ts';
 import { withLock } from '../lib/redis.ts';
 import { labels, runWithLocale, t } from '../i18n/index.ts';
-import { allocatePrivateIp, allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, isPortInRange, usedPrivateIps, usedPublicIpv6 } from './allocation.ts';
-import { parseIpv6Cidr, ipv6ToBigInt } from '../lib/ip.ts';
+import { allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, hostPrivateIps, isPortInRange, usedPrivateIps, usedPublicIpv6 } from './allocation.ts';
+import { allocateFromCidr, isIPv4, parseCidr, parseIpv6Cidr, ipv6ToBigInt, ipToInt } from '../lib/ip.ts';
 import { syncSitesSafe } from './gateway.ts';
 import { detachInstance, VPC_DEVICE } from './vpc.ts';
 import { bumpEgressVersion } from './egress.ts';
@@ -70,14 +70,17 @@ export function currentPlacement(inst: MigratingInstance): Placement {
  * 尽量沿用 prefer 中的值（迁移时沿用原端口号，回滚时恢复原来的全部资源），被占用时重新分配。
  */
 export async function place(inst: Instance, node: Node, prefer: Partial<Placement>, checkCapacity: boolean): Promise<Placement> {
-  const run = (tx: Tx) => doPlace(tx, inst, node, prefer, checkCapacity);
-  const placement = await withLock(`node-alloc:${node.id}`, 30_000, () => withLock(`node-ports:${node.id}`, 30_000, () => prisma.$transaction(run)));
+  if (isNatType(inst.type)) node = await ensureNatNetwork(node);
+  const placement = await withLock(`node-alloc:${node.id}`, 60_000, async () => {
+    const hostIps = isNatType(inst.type) ? await hostPrivateIps(node, inst) : new Set<string>();
+    return withLock(`node-ports:${node.id}`, 30_000, () => prisma.$transaction((tx) => doPlace(tx, inst, node, prefer, checkCapacity, hostIps)));
+  });
   // 使用了智能分流出口的实例离开原宿主机：刷新原宿主机的分流配置（内网地址可能分给其他实例）
   if (inst.egressId && node.id !== inst.nodeId) await bumpEgressVersion(inst.nodeId);
   return placement;
 }
 
-async function doPlace(tx: Tx, inst: Instance, node: Node, prefer: Partial<Placement>, checkCapacity: boolean): Promise<Placement> {
+async function doPlace(tx: Tx, inst: Instance, node: Node, prefer: Partial<Placement>, checkCapacity: boolean, hostIps: ReadonlySet<string>): Promise<Placement> {
   if (checkCapacity) {
     const active = await tx.instance.count({ where: { nodeId: node.id, status: { notIn: ['DELETED'] } } });
     if (active >= node.maxInstances) throw conflict(t('migrate.targetFull', { node: node.name }));
@@ -85,8 +88,12 @@ async function doPlace(tx: Tx, inst: Instance, node: Node, prefer: Partial<Place
 
   let privateIp: string | null = null;
   if (isNatType(inst.type)) {
-    const used = await usedPrivateIps(tx, node);
-    privateIp = prefer.privateIp && !used.has(prefer.privateIp) ? prefer.privateIp : await allocatePrivateIp(tx, node);
+    const used = await usedPrivateIps(tx, node, hostIps, inst.id);
+    const cidr = parseCidr(node.natCidr!);
+    const preferred = prefer.privateIp && isIPv4(prefer.privateIp) ? ipToInt(prefer.privateIp) : null;
+    privateIp = preferred !== null && preferred > cidr.network && preferred < cidr.broadcast && prefer.privateIp !== cidr.address && !used.has(prefer.privateIp!)
+      ? prefer.privateIp! : allocateFromCidr(node.natCidr!, used);
+    if (!privateIp) throw conflict(t('node.privateIpExhausted'));
   }
 
   let publicIpv6: string | null = null;

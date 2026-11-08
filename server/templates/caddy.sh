@@ -27,7 +27,7 @@ done
 
 info "安装 Caddy / installing Caddy"
 apt-get update -y -qq
-apt-get install -y -qq curl ca-certificates gnupg jq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq curl ca-certificates gnupg jq openssl debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 if ! command -v caddy >/dev/null 2>&1; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o /etc/apt/sources.list.d/caddy-stable.list
@@ -67,16 +67,41 @@ info "等待 Caddy 管理接口 / waiting for the Caddy admin API"
 for _ in $(seq 1 30); do curl -fsS http://localhost:2019/config/ >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS http://localhost:2019/config/ >/dev/null || die "Caddy 未能启动，请执行 journalctl -u $UNIT 查看日志"
 
-info "启用远程管理（仅面板证书可访问）/ enabling mTLS remote admin"
-CONFIG_FILE=$(mktemp)
+info "刷新远程管理与证书（保留已有站点）/ refreshing mTLS admin without removing sites"
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf -- "$WORK_DIR"' EXIT
+CONFIG_FILE="$WORK_DIR/initial.json"
 cat > "$CONFIG_FILE" <<'PALEDOVE_CONFIG'
 @@PALEDOVE_INITIAL_CONFIG@@
 PALEDOVE_CONFIG
-curl -fsS -X POST http://localhost:2019/load -H 'content-type: application/json' --data-binary "@$CONFIG_FILE" >/dev/null
-rm -f "$CONFIG_FILE"
-sleep 2
-ROOT_CERT=$(curl -fsS http://localhost:2019/pki/ca/local | jq -r '.root_certificate')
-[ -n "$ROOT_CERT" ] && [ "$ROOT_CERT" != "null" ] || die "无法读取 Caddy 本地 CA 证书 / cannot read the Caddy local CA"
+curl -fsS --max-time 10 http://localhost:2019/config/ -o "$WORK_DIR/current.json"
+jq -s '.[0] as $initial | (.[1] // {}) | .admin = $initial.admin | .apps = (.apps // {})' "$CONFIG_FILE" "$WORK_DIR/current.json" > "$WORK_DIR/merged.json"
+# Caddy otherwise treats an identical /load as a no-op, retaining the old identity certificate cache.
+curl -fsS --max-time 30 -X POST http://localhost:2019/load -H 'content-type: application/json' -H 'Cache-Control: must-revalidate' --data-binary "@$WORK_DIR/merged.json" >/dev/null
+
+info '等待远程管理证书签发与校验 / waiting for a valid remote admin certificate'
+CERT_READY=0
+CERT_DEADLINE=$((SECONDS + 90))
+while [ "$SECONDS" -lt "$CERT_DEADLINE" ]; do
+  if ROOT_CERT=$(curl -fsS --max-time 5 http://localhost:2019/pki/ca/local | jq -er '.root_certificate | select(type == "string" and length > 0)'); then
+    printf '%s\n' "$ROOT_CERT" > "$WORK_DIR/root.crt"
+    # Read the server chain without placing the panel's private key on this host.
+    # The handshake may end with "client certificate required" after sending the chain.
+    timeout 5 openssl s_client -connect "127.0.0.1:$ADMIN_PORT" -showcerts </dev/null > "$WORK_DIR/handshake.txt" 2>/dev/null || true
+    awk '/-----BEGIN CERTIFICATE-----/{cert=1} cert {print} /-----END CERTIFICATE-----/{cert=0}' "$WORK_DIR/handshake.txt" > "$WORK_DIR/chain.pem"
+    if [ -s "$WORK_DIR/chain.pem" ] && openssl verify -purpose sslserver -CAfile "$WORK_DIR/root.crt" -untrusted "$WORK_DIR/chain.pem" "$WORK_DIR/chain.pem" > "$WORK_DIR/verify.log" 2>&1; then
+      CERT_READY=1
+      break
+    fi
+  fi
+  sleep 1
+done
+if [ "$CERT_READY" != 1 ]; then
+  date -u '+Host UTC: %Y-%m-%d %H:%M:%S'
+  if [ -s "$WORK_DIR/chain.pem" ]; then openssl x509 -in "$WORK_DIR/chain.pem" -noout -dates >&2 || true; fi
+  [ ! -f "$WORK_DIR/verify.log" ] || cat "$WORK_DIR/verify.log" >&2
+  die "Caddy 管理证书尚未有效，请检查宿主机时间（date -u、timedatectl）及 journalctl -u $UNIT；校准时间后重新执行此脚本 / Caddy admin certificate is not valid"
+fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null; ufw allow 443/udp >/dev/null
@@ -89,5 +114,9 @@ PAYLOAD=$(jq -n --arg token "$TOKEN" --arg rootCert "$ROOT_CERT" --arg version "
   '{token: $token, rootCert: $rootCert, version: $version, port: $port}')
 RESPONSE=$(curl -fsS --max-time 60 -X POST "$PANEL_URL/api/agent/caddy/register" -H 'content-type: application/json' -H "x-locale: $LOCALE" --data "$PAYLOAD") \
   || die "注册失败，请确认面板可以访问本机 TCP $ADMIN_PORT 端口 / registration failed"
-echo "$RESPONSE" | jq -r '.message // .'
+if ! printf '%s' "$RESPONSE" | jq -e '.ok == true' >/dev/null; then
+  printf '%s' "$RESPONSE" | jq -r '.message // .' >&2 || true
+  die "面板未完成 Caddy 验证，请按上述错误修复后重新运行此命令 / panel verification failed; fix the error above and retry"
+fi
+printf '%s' "$RESPONSE" | jq -r '.message // .'
 info "完成！/ done"

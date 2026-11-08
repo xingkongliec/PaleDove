@@ -18,6 +18,7 @@ import { sendBusinessNotice } from './mail/business-mail.ts';
 import { bumpEgressVersion } from './egress.ts';
 import { invalidateCache } from '../lib/cache.ts';
 import { getSettings } from '../lib/settings.ts';
+import { syncProvisioningNetwork, withPrivateIpRecovery } from './provisioning-network.ts';
 
 export type FullInstance = Instance & {
   node: Node;
@@ -106,19 +107,22 @@ const handlers: Record<Task['type'], (ctx: Ctx) => Promise<void>> = {
     const { inst, incus } = ctx;
     if (!inst.image) throw new Error(t('task.noImage'));
     await setStatus(inst.id, { status: 'CREATING', lastError: null });
-    if (!(await incus.instanceExists(inst.name))) {
-      const req = buildCreateRequest({
-        instance: inst,
-        node: inst.node,
-        image: inst.image,
-        ip: inst.ipAddress,
-        portMappings: inst.portMappings,
-        vars: cloudInitVars(ctx, payloadPassword(ctx)),
-      });
-      await incus.createInstance(req);
-    } else {
-      await ensureStarted(ctx);
-    }
+    await withPrivateIpRecovery(inst, incus, async () => {
+      if (!(await incus.instanceExists(inst.name))) {
+        const req = buildCreateRequest({
+          instance: inst,
+          node: inst.node,
+          image: inst.image!,
+          ip: inst.ipAddress,
+          portMappings: inst.portMappings,
+          vars: cloudInitVars(ctx, payloadPassword(ctx)),
+        });
+        await incus.createInstance(req);
+      } else {
+        await syncProvisioningNetwork(inst, incus);
+        await ensureStarted(ctx);
+      }
+    });
     // 创建期间新增的端口映射在此补齐
     await reconcileProxyDevices(inst);
     await setStatus(inst.id, { status: 'RUNNING', provisionedAt: inst.provisionedAt ?? new Date(), lastError: null });
@@ -126,8 +130,11 @@ const handlers: Record<Task['type'], (ctx: Ctx) => Promise<void>> = {
   },
 
   async START(ctx) {
-    await ensureStarted(ctx);
-    await setStatus(ctx.inst.id, { status: 'RUNNING', lastError: null });
+    await withPrivateIpRecovery(ctx.inst, ctx.incus, async () => {
+      await syncProvisioningNetwork(ctx.inst, ctx.incus);
+      await ensureStarted(ctx);
+    });
+    await setStatus(ctx.inst.id, { status: 'RUNNING', provisionedAt: ctx.inst.provisionedAt ?? new Date(), lastError: null });
   },
 
   async STOP(ctx) {

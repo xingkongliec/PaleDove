@@ -20,7 +20,7 @@ export async function sendBusinessNotice(userId: number, event: BusinessEvent, v
     const title = translate(locale, `mail.${event}Title`);
     const text = translate(locale, `mail.${event}Body`, vars);
     const baseUrl = config.PANEL_URL ?? '';
-    const body = p(esc(translate(locale, 'mail.hello', { name: user.name || user.username }))) + p(esc(text)) + (baseUrl ? button(`${baseUrl}/billing`, translate(locale, 'mail.billingButton'), locale) : '');
+    const body = p(esc(translate(locale, 'mail.hello', { name: user.name || user.username }))) + p(esc(text)) + (baseUrl ? button(`${baseUrl}/console/billing`, translate(locale, 'mail.billingButton'), locale) : '');
     const sent = await sendMail(user.email, `【${site.siteName}】${title}`, await renderMail({ title, preheader: text, body, footer: translate(locale, 'mail.businessOff'), locale, baseUrl }));
     if (!sent) await redis.del(key);
     return sent;
@@ -48,7 +48,7 @@ export async function renderNoticeMail(user: { name: string | null; username: st
     p(esc(translate(locale, 'mail.hello', { name: user.name || user.username }))) +
     p(escLines(content)) +
     muted(esc(related)) +
-    (baseUrl ? button(`${baseUrl}/notifications`, translate(locale, 'mail.noticeButton'), locale) : '');
+    (baseUrl ? button(`${baseUrl}/console/notifications`, translate(locale, 'mail.noticeButton'), locale) : '');
   return { subject: `【${site.siteName}】${title}`, html: await renderMail({ title, preheader: content.slice(0, 120), body, locale, baseUrl }) };
 }
 

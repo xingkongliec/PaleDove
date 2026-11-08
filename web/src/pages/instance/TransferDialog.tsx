@@ -108,7 +108,7 @@ export function TransferDialog({
       // 用户转出后已无权访问该实例
       if (onDone) onDone();
       else if (admin) invalidate();
-      else navigate('/instances');
+      else navigate('/console/instances');
     },
   });
   const ready = !!current && canTransfer(current) && !!recipientOk && confirmText === current.hostname && (mode === 'KEEP' || !!imageId);

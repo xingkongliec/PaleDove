@@ -1,5 +1,7 @@
 // 页面代码分块的加载函数：路由懒加载（App.tsx）和预加载（侧边栏悬停、登录后空闲时）共用同一个 import()，
 // 浏览器只会下载一次，预加载完成后切换页面不再等待网络。
+import { consoleRedirect } from '../shared/index';
+
 type Loader = () => Promise<unknown>;
 
 export const loaders = {
@@ -54,7 +56,7 @@ export const loaders = {
 const L = loaders;
 /** 路径 → 需要的代码块（按顺序匹配，具体的写在前面） */
 const ROUTES: Array<[RegExp, Loader[]]> = [
-  [/^\/(admin\/)?tickets/, [L.tickets]],
+  [/^\/(admin|console)\/tickets/, [L.tickets]],
   [/^\/verify-email/, [L.verifyEmail]],
   [/^\/(terms|privacy)$/, [L.legal]],
   [/^\/help\/[^/]+/, [L.legal]],
@@ -62,24 +64,25 @@ const ROUTES: Array<[RegExp, Loader[]]> = [
   [/^\/console\/documents\/[^/]+/, [L.documentDetail]],
   [/^\/console\/documents\/?$/, [L.documents]],
   [/^\/(forgot-password|reset-password)$/, [L.passwordReset]],
-  [/^\/dashboard/, [L.dashboard]],
+  [/^\/console\/?$/, [L.dashboard]],
+  [/^\/console\/dashboard/, [L.dashboard]],
   [/^\/(console\/)?store/, [L.store]],
-  [/^\/instances\/[^/]+/, [L.instanceDetail]],
-  [/^\/instances/, [L.instances]],
-  [/^\/vpc/, [L.vpcs]],
-  [/^\/billing/, [L.billing]],
-  [/^\/invoices\/[^/]+/, [L.invoiceDetail]],
-  [/^\/invoices/, [L.invoices]],
-  [/^\/invite/, [L.affiliate]],
+  [/^\/console\/instances\/[^/]+/, [L.instanceDetail]],
+  [/^\/console\/instances/, [L.instances]],
+  [/^\/console\/vpc/, [L.vpcs]],
+  [/^\/console\/billing/, [L.billing]],
+  [/^\/console\/invoices\/[^/]+/, [L.invoiceDetail]],
+  [/^\/console\/invoices/, [L.invoices]],
+  [/^\/console\/invite/, [L.affiliate]],
   [/^\/console\/marketplace\/mine/, [L.marketMine]],
   [/^\/(market|console\/marketplace)/, [L.market]],
   [/^\/admin\/market/, [L.adminMarket]],
-  [/^\/(admin\/)?account/, [L.account]],
-  [/^\/terminal/, [L.terminal]],
-  [/^\/transfer/, [L.transfer]],
-  [/^\/docs\/api/, [L.apiDocs]],
-  [/^\/activity/, [L.activity]],
-  [/^\/(admin\/)?notifications/, [L.notifications]],
+  [/^\/(admin|console)\/account/, [L.account]],
+  [/^\/console\/terminal/, [L.terminal]],
+  [/^\/console\/transfer/, [L.transfer]],
+  [/^\/console\/docs\/api/, [L.apiDocs]],
+  [/^\/console\/activity/, [L.activity]],
+  [/^\/(admin|console)\/notifications/, [L.notifications]],
   [/^\/admin\/?$/, [L.adminDashboard]],
   [/^\/admin\/instances\/new/, [L.adminInstanceCreate]],
   [/^\/admin\/instances\/[^/]+/, [L.instanceDetail]],
@@ -115,7 +118,9 @@ export function preload(fn: Loader) {
 
 /** 预加载某个路径需要的页面代码，用于链接悬停 / 获得焦点时 */
 export function prefetchRoute(path: string) {
-  const hit = ROUTES.find(([re]) => re.test(path));
+  const pathname = path.split(/[?#]/, 1)[0];
+  const canonical = consoleRedirect(pathname) ?? pathname;
+  const hit = ROUTES.find(([re]) => re.test(canonical));
   hit?.[1].forEach(preload);
 }
 

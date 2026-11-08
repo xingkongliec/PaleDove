@@ -72,7 +72,7 @@ export function CommandPalette({
         label: i.hostname,
         hint: [i.name, i.publicIp].filter(Boolean).join(' · '),
         icon: <Server />,
-        to: area === 'admin' ? `/admin/instances/${i.id}` : `/instances/${i.id}`,
+        to: area === 'admin' ? `/admin/instances/${i.id}` : `/console/instances/${i.id}`,
       }));
     return [...base, ...inst];
   }, [nav, extra, instances.data, term, area, t]);

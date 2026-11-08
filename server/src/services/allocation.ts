@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { getIncus } from '../incus/index.ts';
 import { badRequest, conflict } from '../lib/errors.ts';
-import { allocateFromCidr, allocateIpv6Prefix, bigIntToIpv6, parseIpv6Cidr, parseCidr } from '../lib/ip.ts';
+import { allocateFromCidr, allocateIpv6Prefix, bigIntToIpv6, isIPv4, parseIpv6Cidr, parseCidr } from '../lib/ip.ts';
 import { parseIpv6List } from '../shared/index.ts';
 import { prisma, type Node, type Prisma } from '../lib/prisma.ts';
 import { t } from '../i18n/index.ts';
@@ -19,17 +19,29 @@ export async function ensureNatNetwork(node: Node): Promise<Node> {
   return prisma.node.update({ where: { id: node.id }, data: { natCidr: cidr } });
 }
 
-export async function usedPrivateIps(db: Db, node: Node): Promise<Set<string>> {
-  const rows = await db.instance.findMany({
-    where: { nodeId: node.id, privateIp: { not: null } },
-    select: { privateIp: true },
-  });
-  return new Set(rows.map((r) => r.privateIp!));
+/** 在数据库事务之外读取；租约查询失败时禁止继续盲分配。 */
+export async function hostPrivateIps(node: Node, own?: { name: string; macAddress: string | null }): Promise<Set<string>> {
+  const leases = await (await getIncus(node)).getNetworkLeases(node.natNetwork);
+  const ownMac = own?.macAddress?.toLowerCase();
+  return new Set(leases.filter((lease) => {
+    if (!isIPv4(lease.address)) return false;
+    const ownLease = ownMac && lease.hwaddr?.toLowerCase() === ownMac &&
+      ((lease.type === 'static' && lease.hostname === own?.name) || lease.type === 'dynamic');
+    return !ownLease;
+  }).map((lease) => lease.address));
 }
 
-export async function allocatePrivateIp(db: Db, node: Node): Promise<string> {
+export async function usedPrivateIps(db: Db, node: Node, hostIps: ReadonlySet<string>, excludeInstanceId?: number): Promise<Set<string>> {
+  const rows = await db.instance.findMany({
+    where: { nodeId: node.id, privateIp: { not: null }, ...(excludeInstanceId ? { id: { not: excludeInstanceId } } : {}) },
+    select: { privateIp: true },
+  });
+  return new Set([...hostIps, ...rows.map((r) => r.privateIp!)]);
+}
+
+export async function allocatePrivateIp(db: Db, node: Node, hostIps: ReadonlySet<string>): Promise<string> {
   if (!node.natCidr) throw new Error(t('node.natNotSynced'));
-  const ip = allocateFromCidr(node.natCidr, await usedPrivateIps(db, node));
+  const ip = allocateFromCidr(node.natCidr, await usedPrivateIps(db, node, hostIps));
   if (!ip) throw conflict(t('node.privateIpExhausted'));
   return ip;
 }

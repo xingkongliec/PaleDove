@@ -1,4 +1,4 @@
-// 工单（用户与管理员共用）：/tickets 列表、/tickets/new 提交、/tickets/:id 详情；管理员为 /admin/tickets
+// 工单（用户与管理员共用）：/console/tickets 列表、/console/tickets/new 提交、/console/tickets/:id 详情；管理员为 /admin/tickets
 import { useParams } from 'react-router';
 import { TicketCreate } from './TicketCreate';
 import { TicketDetail } from './TicketDetail';

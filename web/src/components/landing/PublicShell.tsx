@@ -139,7 +139,7 @@ export function PublicHeader({ active }: { active: string }) {
   }, []);
   const siteName = cfg?.siteName ?? 'PaleDove';
   const allowRegister = cfg?.allowRegister ?? true;
-  const consoleHref = me ? (me.role === 'ADMIN' ? '/admin' : '/dashboard') : null;
+  const consoleHref = me ? (me.role === 'ADMIN' ? '/admin' : '/console/dashboard') : null;
   const consoleLabel = me?.role === 'ADMIN' ? t('shell.adminConsole') : t('home.nav.console');
   const item = (on: boolean) => cn('rounded-[8px] px-3 py-2 text-sm transition-colors', on ? 'bg-surface-3 font-medium text-fg' : 'text-fg-2 hover:bg-surface-3/70 hover:text-fg');
   return (
@@ -235,7 +235,7 @@ export function PublicFooter({ wide = false }: { wide?: boolean }) {
   const click = useLinkClick();
   const siteName = cfg?.siteName ?? 'PaleDove';
   const isAdmin = me?.role === 'ADMIN';
-  const consoleHref = me ? (isAdmin ? '/admin' : '/dashboard') : null;
+  const consoleHref = me ? (isAdmin ? '/admin' : '/console/dashboard') : null;
   return (
     <footer className="border-t border-line bg-surface-2/40">
       <div className={cn('mx-auto grid gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1.7fr_1fr_1fr_1fr]', wide ? 'max-w-[92rem]' : 'max-w-7xl')}>
@@ -253,9 +253,9 @@ export function PublicFooter({ wide = false }: { wide?: boolean }) {
         </FooterColumn>
         <FooterColumn title={t('lp.footer.center')}>
           <Link to={consoleHref ?? '/login'}>{t('home.nav.console')}</Link>
-          <Link to={me && !isAdmin ? '/instances' : '/login'}>{t('lp.footer.instances')}</Link>
-          <Link to={me && !isAdmin ? '/billing' : '/login'}>{t('lp.footer.billing')}</Link>
-          <Link to={me && !isAdmin ? '/tickets' : '/login'}>{t('lp.footer.tickets')}</Link>
+          <Link to={me && !isAdmin ? '/console/instances' : '/login'}>{t('lp.footer.instances')}</Link>
+          <Link to={me && !isAdmin ? '/console/billing' : '/login'}>{t('lp.footer.billing')}</Link>
+          <Link to={me && !isAdmin ? '/console/tickets' : '/login'}>{t('lp.footer.tickets')}</Link>
         </FooterColumn>
         <FooterColumn title={t('lp.footer.legal')}>
           <Link to="/terms">{t('legal.terms')}</Link>

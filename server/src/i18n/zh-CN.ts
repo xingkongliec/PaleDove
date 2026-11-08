@@ -373,6 +373,7 @@ export const zhCN = {
   'node.noIpv4Network': '网络 {network} 未启用 IPv4，无法创建 NAT 实例',
   'node.natNotSynced': '节点 NAT 网段未同步',
   'node.privateIpExhausted': '节点内网地址已耗尽',
+  'task.privateIpRepairUnsafe': '仅允许调整面板所属且尚未开通的已停止实例的内网地址',
   'port.outOfRange': '公网端口必须在 {start}-{end} 范围内',
   'port.taken': '公网端口 {port} 已被占用',
   'port.exhausted': '节点端口已耗尽',
@@ -485,6 +486,8 @@ export const zhCN = {
   'caddy.notInstalled': '该节点尚未安装 Caddy',
   'caddy.invalidUpstream': '上游地址格式不正确，例如 10.0.0.5:8080 或 https://example.com',
   'caddy.connectFailed': '无法连接 Caddy 管理接口：{message}',
+  'caddy.serverCertificateExpired': 'Caddy 管理接口的服务端证书链已过期。请检查面板与宿主机的系统时间是否同步，并重新生成、执行 Caddy 安装脚本以刷新管理证书；已有站点会保留',
+  'caddy.serverCertificateNotYetValid': 'Caddy 管理接口的服务端证书尚未生效。请校准面板与宿主机的系统时间，然后重新验证连接',
 
   // 节点
   'node.notFound': '节点不存在',

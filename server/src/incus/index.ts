@@ -3,6 +3,8 @@ import { getClientCertificate, type ClientCertificate } from './certs.ts';
 import { HttpIncusClient } from './client.ts';
 import { MockIncusClient } from './mock.ts';
 import type { IncusApi } from './types.ts';
+// Also loaded by Agent routes; a dynamic import creates async initialization cycles in the single-file bundle.
+import { execViaHost, guestAgentUnavailable } from '../services/agent/guest-exec.ts';
 
 export * from './types.ts';
 
@@ -23,7 +25,6 @@ export async function getIncus(node: NodeConn): Promise<IncusApi> {
     client.exec = async (name, command, opts) => {
       try { return await exec(name, command, opts); }
       catch (error) {
-        const { guestAgentUnavailable, execViaHost } = await import('../services/agent/guest-exec.ts');
         if (!guestAgentUnavailable(error)) throw error;
         return execViaHost(node.id, name, command, opts);
       }

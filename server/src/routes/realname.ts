@@ -23,7 +23,7 @@ const byUser = (req: FastifyRequest) => `realname:${req.user?.id ?? req.ip}`;
 const unavailable = () => new AppError(503, 'REALNAME_UNAVAILABLE', t('realname.unavailable'));
 
 /** 认证完成后支付宝跳回的页面 */
-const returnUrl = (req: FastifyRequest) => `${panelUrl(req)}/account?tab=realname`;
+const returnUrl = (req: FastifyRequest) => `${panelUrl(req)}/console/account?tab=realname`;
 
 function view(v: RealNameVerification | null, cfg: CertifyConfig | null): RealNameInfoDTO {
   if (!v) return { status: 'NONE', available: !!cfg };

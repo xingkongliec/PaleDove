@@ -45,7 +45,7 @@ function RowActions({ inst }: { inst: InstanceDTO }) {
   const iconBtn = 'flex size-7 items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg disabled:pointer-events-none disabled:opacity-35 [&>svg]:size-3.5';
   // 电源按钮用颜色区分：开机绿色、关机红色、重启橙色
   const colorBtn = 'flex size-7 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-35 [&>svg]:size-3.5';
-  const go = (tab?: string) => navigate(`/instances/${inst.id}${tab ? `?tab=${tab}` : ''}`);
+  const go = (tab?: string) => navigate(`/console/instances/${inst.id}${tab ? `?tab=${tab}` : ''}`);
   return (
     <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
       {running ? (
@@ -360,7 +360,7 @@ export default function Instances() {
             rows={rows}
             loading={q.isLoading}
             rowKey={(i) => i.id}
-            onRowClick={(i) => navigate(`/instances/${i.id}`)}
+            onRowClick={(i) => navigate(`/console/instances/${i.id}`)}
             empty={
               <Empty
                 title={t('instances.empty')}

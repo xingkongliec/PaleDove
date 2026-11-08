@@ -20,7 +20,7 @@ const FLOW_COOKIE = 'pd_oauth';
 export default async function oauthRoutes(app: FastifyInstance) {
   const fail = (reply: FastifyReply, message: string, linkBase: string | null = null) =>
     reply.redirect(linkBase ? `${linkBase}&oauth_error=${encodeURIComponent(message)}` : `/login?error=${encodeURIComponent(message)}`);
-  const accountPage = (role?: string) => `${role === 'ADMIN' ? '/admin/account' : '/account'}?tab=connections`;
+  const accountPage = (role?: string) => `${role === 'ADMIN' ? '/admin/account' : '/console/account'}?tab=connections`;
 
   app.get('/api/auth/oauth/:provider/start', async (req, reply) => {
     const { provider } = req.params as { provider: string };

@@ -14,7 +14,6 @@ import { cn } from '@/lib/cn';
 import { copyText, daysLeft, daysLeftText, formatBandwidth, formatBytes, formatCores, formatDate, formatMemory, formatMoney, formatRate, formatTraffic } from '@/lib/format';
 import { useCurrency, useMe, usePublicConfig } from '@/lib/queries';
 import { toast } from '@/lib/toast';
-import { diskIoText } from '@/lib/plans';
 import { TransferDialog } from './TransferDialog';
 
 /** 卡片标题（incudal：text-sm 中等字重，下方留 1rem） */
@@ -65,7 +64,7 @@ function SubscriptionCard({ inst, admin, onRenew }: { inst: AnyInstance; admin?:
     onSuccess: () => {
       toast.success(t('settings.deleteSubmitted'), t('settings.deleteSubmittedDesc'));
       invalidate();
-      navigate('/instances');
+      navigate('/console/instances');
     },
     onError: (e) => toast.fromError(e),
   });
@@ -235,7 +234,6 @@ function BasicsCard({ inst }: { inst: AnyInstance }) {
     staleTime: 60_000,
   });
   const nat = isNatType(inst.type);
-  const io = diskIoText(inst, t);
   const password = reveal ? (creds.data?.password ?? null) : null;
   const expired = daysLeft(inst.expiresAt) <= 0;
   return (
@@ -266,11 +264,6 @@ function BasicsCard({ inst }: { inst: AnyInstance }) {
           <TextButton onClick={() => setReveal(!reveal)}>{reveal ? t('common.hide') : t('common.show')}</TextButton>
           {password && <TextButton onClick={() => void doCopy(password)}>{t('common.copy')}</TextButton>}
         </InfoRow>
-        {io && (
-          <InfoRow label={t('spec.diskIo')} mono={false}>
-            {io}
-          </InfoRow>
-        )}
         <InfoRow label={t('overview.node')}>
           <CountryFlag code={inst.country} />
           <span className="truncate uppercase">{'node' in inst ? (inst as { node: { name: string } }).node.name : inst.region}</span>
@@ -344,7 +337,7 @@ function TrafficReset({ inst }: { inst: AnyInstance }) {
     mutationFn: () => api.post<{ invoice: InvoiceDTO }>(`/instances/${inst.id}/reset-traffic`),
     onSuccess: (r) => {
       toast.success(t('invoice.created'), r.invoice.no);
-      navigate('/invoices');
+      navigate('/console/invoices');
     },
     onError: (e) => toast.fromError(e),
   });

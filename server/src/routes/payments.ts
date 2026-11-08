@@ -167,7 +167,7 @@ export async function paymentWebhookRoutes(app: FastifyInstance) {
     });
     const base = panelUrl(req);
     const no = payment?.no ?? (/^P\d{20}$/.test(params.out_trade_no ?? '') ? params.out_trade_no : '');
-    return reply.redirect(no ? `${base}/billing?payment=${no}` : `${base}/billing`);
+    return reply.redirect(no ? `${base}/console/billing?payment=${no}` : `${base}/console/billing`);
   });
 }
 

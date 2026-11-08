@@ -19,7 +19,7 @@ import { useI18n, type TFunction } from '@/i18n';
 import { api, errorText } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatBandwidth, formatCores, formatMemory, formatMoney, formatPrice, formatTraffic } from '@/lib/format';
-import { cheapest, diskIoText } from '@/lib/plans';
+import { cheapest } from '@/lib/plans';
 import { useCurrency, useMe, usePublicConfig } from '@/lib/queries';
 import { toast } from '@/lib/toast';
 
@@ -201,14 +201,7 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
               {radio(checked)}
               <span className={cn('truncate', checked ? 'font-semibold text-fg' : 'text-fg')}>{p.name}</span>
             </span>
-            <span className="min-w-0">
-              <span className="tabular block truncate text-fg-2">{spec(p)}</span>
-              {diskIoText(p, t) && (
-                <span className="tabular block truncate text-[11px] text-fg-3" title={`${t('spec.diskIo')}：${diskIoText(p, t)}`}>
-                  {t('spec.diskIo')} {diskIoText(p, t)}
-                </span>
-              )}
-            </span>
+            <span className="tabular min-w-0 truncate text-fg-2">{spec(p)}</span>
             <span className="tabular truncate text-fg-2">{bandwidth(p)}</span>
             <TrafficCell plan={p} traffic={traffic} />
             <span className="truncate text-fg-2" title={networkOf(p, t)}>
@@ -254,12 +247,6 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
                 <span className="flex items-center justify-between gap-3">
                   <span className="text-fg-3">SWAP</span>
                   <span className="tabular text-fg">{t('store.swapValue', { size: formatMemory(p.swap) })}</span>
-                </span>
-              )}
-              {diskIoText(p, t) && (
-                <span className="flex items-center justify-between gap-3">
-                  <span className="shrink-0 text-fg-3">{t('spec.diskIo')}</span>
-                  <span className="tabular truncate text-fg">{diskIoText(p, t)}</span>
                 </span>
               )}
               <span className="flex items-center justify-between gap-3">
@@ -435,7 +422,7 @@ export default function Store() {
       toast.success(t('invoice.created'), r.invoice.no);
       qc.setQueryData(['invoice', r.invoice.id], r.invoice);
       void qc.invalidateQueries({ queryKey: ['invoices'] });
-      navigate(`/invoices/${r.invoice.id}`);
+      navigate(`/console/invoices/${r.invoice.id}`);
     },
     onError: (e) => setError(errorText(e)),
   });
@@ -482,7 +469,7 @@ export default function Store() {
               {info?.realName && (
                 <p className="mt-2.5 text-xs text-fg-3">
                   {t('store.realNameHint')}{' '}
-                  <Link to="/account?tab=realname" className="text-fg underline underline-offset-2">
+                  <Link to="/console/account?tab=realname" className="text-fg underline underline-offset-2">
                     {t('store.realNameGo')}
                   </Link>
                 </p>

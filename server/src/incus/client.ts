@@ -12,6 +12,7 @@ import {
   type IncusInstanceFull,
   type IncusInstanceState,
   type IncusNetwork,
+  type IncusNetworkLease,
   type IncusNetworkCreate,
   type IncusNetworkState,
   type IncusVolumeCreate,
@@ -241,6 +242,10 @@ export class HttpIncusClient implements IncusApi {
 
   async getNetwork(name: string): Promise<IncusNetwork> {
     return (await this.call<IncusNetwork>('GET', `/1.0/networks/${encodeURIComponent(name)}`)).data;
+  }
+
+  async getNetworkLeases(name: string): Promise<IncusNetworkLease[]> {
+    return (await this.call<IncusNetworkLease[]>('GET', `/1.0/networks/${encodeURIComponent(name)}/leases`)).data;
   }
 
   async createNetwork(req: IncusNetworkCreate): Promise<void> {

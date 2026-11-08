@@ -275,8 +275,8 @@ function AccountMenu({ me, area, collapsed, onLogout }: { me: MeDTO; area: 'user
         </div>
       }
       items={[
-        { label: t('nav.account'), icon: <UserRound />, onClick: () => navigate(area === 'admin' ? '/admin/account' : '/account') },
-        { label: t('nav.billing'), icon: <Wallet />, hidden: area === 'admin', onClick: () => navigate('/billing') },
+        { label: t('nav.account'), icon: <UserRound />, onClick: () => navigate(area === 'admin' ? '/admin/account' : '/console/account') },
+        { label: t('nav.billing'), icon: <Wallet />, hidden: area === 'admin', onClick: () => navigate('/console/billing') },
         { separator: true, label: '' },
         { label: t('shell.logout'), icon: <LogOut />, onClick: onLogout, danger: true },
       ]}
@@ -306,7 +306,7 @@ function SidebarContent({
   return (
     <div className="flex h-full flex-col">
       <Link
-        to={area === 'admin' ? '/admin' : '/dashboard'}
+        to={area === 'admin' ? '/admin' : '/console/dashboard'}
         onClick={onNavigate}
         className={cn('mt-2 flex shrink-0 items-center gap-2.5 rounded-lg transition-colors hover:bg-surface-3/70', collapsed ? 'mx-1.5 justify-center p-1' : 'mx-3 p-2')}
       >
@@ -438,7 +438,7 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
       ? [{ label: t('nav.admin.addNode'), to: '/admin/nodes/new', icon: <Plus /> }]
       : [
           { label: t('nav.store'), to: '/console/store', icon: <Plus /> },
-          { label: t('shell.topUp'), to: '/billing?topup=1', icon: <Wallet /> },
+          { label: t('shell.topUp'), to: '/console/billing?topup=1', icon: <Wallet /> },
         ];
   const headerLink = (to: string, label: string, icon: ReactNode, external = false) => (
     <Tooltip content={label} side="bottom">
@@ -509,7 +509,7 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
                 </button>
                 {area === 'user' && (
                   <Link
-                    to="/billing"
+                    to="/console/billing"
                     title={t('shell.balance')}
                     className="mr-1 hidden h-8 items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 text-[13px] transition-colors hover:border-line-strong sm:flex"
                   >
@@ -530,7 +530,7 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
 
           <main className="w-full flex-1 p-4 lg:px-6 lg:py-7">
             {area === 'user' && !blocked && <OAuthBindBanner />}
-            <div key={location.pathname.split('/').slice(0, area === 'admin' ? 4 : 3).join('/')} className="route-view">
+            <div key={location.pathname.split('/').slice(0, 4).join('/')} className="route-view">
               {/* 错误边界：页面出错时保留侧边栏与顶栏；外层 key 在切换页面时重置。路由层不做透明度动画，避免页面切换时内容闪烁。 */}
               {blocked ? <MaintenancePage m={maintenance!} /> : <ErrorBoundary><Outlet /></ErrorBoundary>}
             </div>

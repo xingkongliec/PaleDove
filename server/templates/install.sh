@@ -23,6 +23,8 @@ IPV6_PARENT=@@PALEDOVE_IPV6_PARENT@@
 INSTALL_AGENT=@@PALEDOVE_INSTALL_AGENT@@
 INSTALL_FIREWALL=@@PALEDOVE_INSTALL_FIREWALL@@
 ENABLE_FIREWALL_RULES=@@PALEDOVE_ENABLE_FIREWALL_RULES@@
+DEFAULT_FIREWALL_RULES=$ENABLE_FIREWALL_RULES
+AGENT_AVAILABLE=@@PALEDOVE_AGENT_AVAILABLE@@
 INCUS_SOURCE="${INCUS_SOURCE:-zabbly}"   # zabbly | distro
 
 PANEL_CERT=$(cat <<'PALEDOVE_CERT'
@@ -35,6 +37,10 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 trap 'die "安装失败（第 $LINENO 行）/ install failed at line $LINENO"' ERR
 
+@@PALEDOVE_INSTALL_UI@@
+@@PALEDOVE_NODE_UNINSTALL@@
+prepare_install_ui "$@"
+
 [ "$(id -u)" -eq 0 ] || die "请使用 root 运行 / run as root"
 [ -r /etc/os-release ] || die "无法识别系统 / unknown OS"
 . /etc/os-release
@@ -42,12 +48,26 @@ case "${ID:-}" in
   debian|ubuntu) ;;
   *) die "仅支持 Debian 12+/Ubuntu 22.04+（当前 ${ID:-unknown}）/ only Debian and Ubuntu are supported" ;;
 esac
+select_node_action
+dispatch_node_action
 export DEBIAN_FRONTEND=noninteractive
 ARCH=$(dpkg --print-architecture)
 
 info "安装基础依赖 / installing base packages"
 apt-get update -y -qq
-apt-get install -y -qq curl ca-certificates gnupg jq openssl iproute2 >/dev/null
+apt-get install -y -qq curl ca-certificates gnupg jq openssl iproute2 util-linux >/dev/null
+if [ "$NONINTERACTIVE" != 1 ] && [ "$UI_TEXT_ONLY" != 1 ] && ! command -v whiptail >/dev/null 2>&1; then
+  apt-get install -y -qq whiptail >/dev/null 2>&1 || warn '菜单组件不可用，使用文本菜单'
+fi
+configure_installation
+
+# Persist a token-free maintenance entry even when this installer was piped to bash.
+MANAGER_FILE=$(mktemp /usr/local/sbin/.paledove-node.XXXXXX)
+cat > "$MANAGER_FILE" <<'PALEDOVE_NODE_MANAGEMENT'
+@@PALEDOVE_NODE_MANAGEMENT@@
+PALEDOVE_NODE_MANAGEMENT
+chmod 755 "$MANAGER_FILE"
+mv -f "$MANAGER_FILE" /usr/local/sbin/paledove-node
 
 install_incus_zabbly() {
   mkdir -p /etc/apt/keyrings
@@ -90,7 +110,10 @@ systemctl enable --now incus.socket incus.service >/dev/null 2>&1 || true
 [ -e /dev/kvm ] || warn "未检测到 /dev/kvm，该节点无法运行 KVM 实例 / no /dev/kvm: KVM instances unavailable"
 
 info "安装存储工具（$STORAGE_DRIVER）/ installing storage tools"
-apt-get install -y -qq btrfs-progs lvm2 thin-provisioning-tools >/dev/null || true
+case "$STORAGE_DRIVER" in
+  btrfs) apt-get install -y -qq btrfs-progs >/dev/null ;;
+  lvm) apt-get install -y -qq lvm2 thin-provisioning-tools >/dev/null ;;
+esac
 if [ "$STORAGE_DRIVER" = "zfs" ] && ! command -v zfs >/dev/null 2>&1; then
   if [ "$ID" = "debian" ]; then
     # Debian 的 ZFS 位于 contrib 仓库，需要 DKMS 编译内核模块
@@ -151,9 +174,9 @@ fi
 pool_config() {
   case "$STORAGE_DRIVER" in
     dir)
-      if [ -n "$STORAGE_SOURCE" ]; then mkdir -p "$STORAGE_SOURCE"; printf '    source: "%s"\n' "$STORAGE_SOURCE"; fi ;;
+      if [ -n "$STORAGE_SOURCE" ]; then mkdir -p "$STORAGE_SOURCE"; printf '    source: %s\n' "$(jq -Rn --arg value "$STORAGE_SOURCE" '$value')"; else printf '    {}\n'; fi ;;
     *)
-      if [ -n "$STORAGE_SOURCE" ]; then printf '    source: "%s"\n' "$STORAGE_SOURCE"; else printf '    size: "%s"\n' "$STORAGE_SIZE"; fi ;;
+      if [ -n "$STORAGE_SOURCE" ]; then printf '    source: %s\n' "$(jq -Rn --arg value "$STORAGE_SOURCE" '$value')"; else printf '    size: %s\n' "$(jq -Rn --arg value "$STORAGE_SIZE" '$value')"; fi ;;
   esac
 }
 
@@ -231,7 +254,7 @@ fi
 
 install_rfw() {
   [ "$INSTALL_FIREWALL" = "1" ] || return 0
-  local suffix url iface
+  local suffix url iface args='' download
   case "$(uname -m)" in
     x86_64|amd64) suffix=x86_64 ;;
     aarch64|arm64) suffix=aarch64 ;;
@@ -241,16 +264,24 @@ install_rfw() {
   url="https://github.com/0xdabiaoge/incudal-rfw/releases/latest/download/rfw-$suffix-unknown-linux-musl"
   if [ ! -x /root/rfw/rfw ]; then
     info "安装 RFW 防火墙 / installing RFW firewall"
-    curl -fsSL --connect-timeout 15 --max-time 120 "$url" -o /root/rfw/rfw || { warn "RFW 下载失败，继续完成 Incus 安装 / RFW download failed"; return 0; }
-    chmod 755 /root/rfw/rfw
+    download=$(mktemp /root/rfw/.rfw.XXXXXX)
+    if ! curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 "$url" -o "$download"; then
+      rm -f "$download"
+      warn "RFW 下载失败，继续完成 Incus 安装 / RFW download failed"
+      return 0
+    fi
+    chmod 755 "$download"
+    mv -f "$download" /root/rfw/rfw
   else
     info "检测到已安装 RFW / RFW already installed"
   fi
 
-  [ "$ENABLE_FIREWALL_RULES" = "1" ] || { info "RFW 已安装但未启用规则 / RFW installed, rules remain disabled"; return 0; }
-  iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}' || true)
-  [ -n "$iface" ] || iface=$(ip -o link show up 2>/dev/null | awk -F': ' '$2 != "lo" {print $2; exit}' || true)
-  [ -n "$iface" ] || { warn "无法检测 RFW 网卡，跳过规则启用 / cannot detect RFW interface"; return 0; }
+  [ "$ENABLE_FIREWALL_RULES" = "1" ] || { info "RFW 已安装，保留现有规则与运行状态 / RFW installed, existing configuration preserved"; return 0; }
+  iface=$RFW_INTERFACE
+  [ -n "$iface" ] || iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}' || true)
+  [[ "$iface" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || { warn "无法检测 RFW 网卡，跳过规则启用 / cannot detect RFW interface"; return 0; }
+  # Only allowlisted protocol flags, ISO country codes and a validated interface enter the service file.
+  if [ "${#RFW_FLAGS[@]}" -gt 0 ]; then printf -v args ' %s' "${RFW_FLAGS[@]}"; fi
   cat > /etc/systemd/system/rfw.service <<EOF
 [Unit]
 Description=RFW Firewall Service (PaleDove)
@@ -260,7 +291,7 @@ After=network.target
 Type=simple
 User=root
 Environment=RUST_LOG=info
-ExecStart=/root/rfw/rfw --iface $iface --block-email --block-http --block-socks5 --block-fet-strict --block-wireguard --countries CN
+ExecStart=/root/rfw/rfw --iface $iface$args
 Restart=always
 RestartSec=5
 
@@ -268,9 +299,10 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable --now rfw >/dev/null 2>&1 || warn "RFW 服务启动失败，请检查 journalctl -u rfw / failed to start RFW"
+  systemctl enable rfw >/dev/null 2>&1 || true
+  systemctl restart rfw >/dev/null 2>&1 || warn "RFW 服务启动失败，请检查 journalctl -u rfw / failed to start RFW"
   if systemctl is-active --quiet rfw 2>/dev/null; then
-    info "RFW 规则已启用：Email/HTTP/SOCKS5/FET-Strict/WireGuard，GeoIP 黑名单 CN"
+    info "RFW 规则已启用：$RFW_SUMMARY_RULES；$RFW_SUMMARY_GEO；端口日志=$RFW_LOG_PORT_ACCESS；网卡=$iface"
   else
     warn "RFW 未能运行，Incus 网络规则仍会继续配置 / RFW is not active"
   fi
@@ -278,7 +310,10 @@ EOF
 
 if [ "$ENABLE_FIREWALL_RULES" = "1" ] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   info "配置 UFW Incus 网络规则 / configuring UFW Incus rules"
-  ufw allow 22/tcp >/dev/null 2>&1 || true
+  SSH_PORT=${SSH_CONNECTION:-}
+  SSH_PORT=${SSH_PORT##* }
+  [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] || SSH_PORT=22
+  ufw allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
   ufw allow "${API_PORT}/tcp" >/dev/null
   ufw allow "${PORT_RANGE}/tcp" >/dev/null
   ufw allow "${PORT_RANGE}/udp" >/dev/null
@@ -292,6 +327,15 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 @@PALEDOVE_AGENT_INSTALL@@INCUS_VERSION=$(incus version 2>/dev/null | awk -F': ' '/Server version/ {print $2}')
+# Read back the installed configuration, including a pool reused from an earlier installation.
+POOL_STATE=$(incus storage list -f json | jq -ce --arg name "$POOL_NAME" '.[] | select(.name == $name)')
+read_pool_settings "$POOL_STATE"
+AGENT_INSTALLED=false
+FIREWALL_INSTALLED=false
+FIREWALL_ACTIVE=false
+if [ -x /usr/local/bin/paledove-agent ] && [ -f /etc/paledove/agent.env ]; then AGENT_INSTALLED=true; fi
+if [ -x /root/rfw/rfw ]; then FIREWALL_INSTALLED=true; fi
+if [ "$FIREWALL_INSTALLED" = true ] && systemctl is-active --quiet rfw; then FIREWALL_ACTIVE=true; fi
 info "回调面板完成注册 / registering with the panel"
 PAYLOAD=$(jq -n \
   --arg token "$TOKEN" \
@@ -301,8 +345,17 @@ PAYLOAD=$(jq -n \
   --arg version "$INCUS_VERSION" \
   --arg ipv6Address "$V6_ADDR" \
   --arg ipv6Interface "$V6_IF" \
+  --arg storagePool "$POOL_NAME" \
+  --arg storageDriver "$STORAGE_DRIVER" \
+  --arg storageSource "$STORAGE_SOURCE" \
+  --arg storageSize "$STORAGE_SIZE" \
+  --argjson installAgent "$AGENT_INSTALLED" \
+  --argjson installFirewall "$FIREWALL_INSTALLED" \
+  --argjson enableFirewallRules "$FIREWALL_ACTIVE" \
   --argjson port "$API_PORT" \
-  '{token: $token, fingerprint: $fingerprint, publicIp: $publicIp, port: $port, hostname: $hostname, version: $version, ipv6Address: $ipv6Address, ipv6Interface: $ipv6Interface}')
+  '{token: $token, fingerprint: $fingerprint, publicIp: $publicIp, port: $port, hostname: $hostname, version: $version, ipv6Address: $ipv6Address, ipv6Interface: $ipv6Interface,
+    storagePool: $storagePool, storageDriver: $storageDriver, storageSource: $storageSource, storageSize: $storageSize,
+    installAgent: $installAgent, installFirewall: $installFirewall, enableFirewallRules: $enableFirewallRules}')
 info "Incus 服务端证书指纹 / server fingerprint: $SERVER_FP"
 # 回调失败不影响安装结果：可在面板点击「验证并连接」完成接入
 if RESPONSE=$(curl -fsS --max-time 60 -X POST "$PANEL_URL/api/agent/nodes/register" -H 'content-type: application/json' -H "x-locale: $LOCALE" --data "$PAYLOAD"); then
@@ -311,3 +364,4 @@ else
   warn "无法回调面板（$PANEL_URL），请回到面板点击「验证并连接」/ could not reach the panel, click \"Verify & connect\" in the panel"
 fi
 info "安装完成，请确认面板可以访问本机 TCP $API_PORT 端口 / done, make sure the panel can reach TCP $API_PORT"
+info '本地卸载菜单：sudo paledove-node（不需要面板令牌）'

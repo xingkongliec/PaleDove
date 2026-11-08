@@ -21,7 +21,7 @@ import { withLock } from '../lib/redis.ts';
 import { getSettings } from '../lib/settings.ts';
 import { addCycle, dayjs, nextTrafficReset } from '../lib/time.ts';
 import { labels, t } from '../i18n/index.ts';
-import { allocatePrivateIp, allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, nodeLoads } from './allocation.ts';
+import { allocatePrivateIp, allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, hostPrivateIps, nodeLoads } from './allocation.ts';
 import { createTaskRecord, dispatchTask, enqueueTask } from './tasks.ts';
 import { sendBusinessNotice } from './mail/business-mail.ts';
 import { consumeCoupon, quoteCoupon, recurringDiscount, releaseCoupon, renewalPrice } from './coupons.ts';
@@ -164,7 +164,7 @@ export async function purchase(user: User, input: PurchaseInput): Promise<Instan
   const password = input.password || generatePassword();
   const now = new Date();
 
-  const { instance, task } = await withAllocLocks(node.id, () =>
+  const { instance, task } = await withAllocLocks(node, isNatType(plan.type), (hostIps) =>
     prisma.$transaction(async (tx) => {
       const no = orderNo();
       // 优惠码只抵扣首期，续费仍按原价
@@ -217,7 +217,7 @@ export async function purchase(user: User, input: PurchaseInput): Promise<Instan
           couponId: coupon?.coupon.mode === 'RECURRING' ? coupon.coupon.id : null,
           expiresAt: addCycle(now, input.cycle),
         },
-        { password, sshKeys: input.sshKeys ?? [], taskUserId: user.id, ipv6Count: plan.ipv6Count },
+        { password, sshKeys: input.sshKeys ?? [], taskUserId: user.id, ipv6Count: plan.ipv6Count, hostIps },
       );
       const order = await tx.order.create({
         data: {
@@ -286,8 +286,11 @@ type InstanceSpec = Pick<
 > & { type: Instance['type'] };
 
 /** 同时持有 IP 分配锁与端口锁，避免与并发的下单 / 端口映射请求冲突 */
-function withAllocLocks<T>(nodeId: number, fn: () => Promise<T>): Promise<T> {
-  return withLock(`node-alloc:${nodeId}`, 20_000, () => withLock(`node-ports:${nodeId}`, 20_000, fn));
+function withAllocLocks<T>(node: Node, nat: boolean, fn: (hostIps: ReadonlySet<string>) => Promise<T>): Promise<T> {
+  return withLock(`node-alloc:${node.id}`, 60_000, async () => {
+    const hostIps = nat ? await hostPrivateIps(node) : new Set<string>();
+    return withLock(`node-ports:${node.id}`, 20_000, () => fn(hostIps));
+  });
 }
 
 /**
@@ -302,7 +305,7 @@ export function nodeFitsIpv6(node: Pick<Node, 'networkMode' | 'ipv6Subnet'>, ipv
   return ipv6Count > 0 ? hasIpv6Mode(node.networkMode) && !!node.ipv6Subnet : node.networkMode !== 'IPV6_ONLY';
 }
 
-async function allocateInstance(tx: Tx, node: Node, spec: InstanceSpec, opts: { password: string; sshKeys: string[]; taskUserId: number; ipv6Count: number }) {
+async function allocateInstance(tx: Tx, node: Node, spec: InstanceSpec, opts: { password: string; sshKeys: string[]; taskUserId: number; ipv6Count: number; hostIps: ReadonlySet<string> }) {
   let ipId: number | null = null;
   if (spec.type === 'KVM_IPV4') {
     const ip = await tx.ipAddress.findFirst({
@@ -322,7 +325,7 @@ async function allocateInstance(tx: Tx, node: Node, spec: InstanceSpec, opts: { 
       name: `pd-${spec.userId}-${randomId(8)}`,
       nodeId: node.id,
       status: 'CREATING',
-      privateIp: isNatType(spec.type) ? await allocatePrivateIp(tx, node) : null,
+      privateIp: isNatType(spec.type) ? await allocatePrivateIp(tx, node, opts.hostIps) : null,
       ...(opts.ipv6Count > 0 && hasIpv6Mode(node.networkMode) ? await allocateIpv6Resources(tx, node, opts.ipv6Count) : {}),
       macAddress: randomMac(),
       rootPassword: encrypt(opts.password),
@@ -406,9 +409,9 @@ export async function adminCreateInstance(admin: User, input: AdminCreateInput):
 
   const target = node;
   const password = rawPassword || generatePassword();
-  const { instance, task } = await withAllocLocks(target.id, () =>
+  const { instance, task } = await withAllocLocks(target, isNatType(spec.type), (hostIps) =>
     prisma.$transaction(async (tx) => {
-      const created = await allocateInstance(tx, target, spec, { password, sshKeys: sshKeys ?? [], taskUserId: admin.id, ipv6Count });
+      const created = await allocateInstance(tx, target, spec, { password, sshKeys: sshKeys ?? [], taskUserId: admin.id, ipv6Count, hostIps });
       if (charge && spec.price.gt(0)) {
         const no = orderNo();
         await changeBalance(tx, user.id, spec.price.negated(), 'PURCHASE', t('log.adminCreate', { hostname: spec.hostname, no }));

@@ -1,6 +1,7 @@
 import { prisma, type Prisma } from '../../lib/prisma.ts';
 import { redis, withLock } from '../../lib/redis.ts';
 import { startOfDayUTC } from '../../lib/time.ts';
+import { enforceTrafficLimit } from '../metrics.ts';
 
 export interface HostCounter { generation: string; rx: number; tx: number }
 export interface HostTrafficSample { name: string; interfaces: Record<string, HostCounter> }
@@ -52,7 +53,7 @@ export async function saveHostTraffic(nodeId: number, samples: HostTrafficSample
     const prev = await redis.get(hostTrafficKey(id));
     const cur = { t: Date.now(), ...sample };
     await redis.set(hostTrafficKey(id), JSON.stringify({ cur, prev: prev ? (JSON.parse(prev) as { cur: unknown }).cur : null }), 'EX', 120);
-    await (await import('../metrics.ts')).enforceTrafficLimit(updated);
+    await enforceTrafficLimit(updated);
   });
 }
 

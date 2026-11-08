@@ -406,7 +406,7 @@ function InstanceDetailPage({ admin }: { admin?: boolean }) {
       <div className="mb-4 flex flex-col gap-4 border-b border-line pb-4 sm:mb-6 sm:pb-5 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
         <div className="flex min-w-0 items-center gap-3">
           <Link
-            to={admin ? '/admin/instances' : '/instances'}
+            to={admin ? '/admin/instances' : '/console/instances'}
             aria-label={t('detail.backToList')}
             title={t('detail.backToList')}
             className="-ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-md text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg"

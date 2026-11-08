@@ -70,7 +70,7 @@ export async function sendTicketEmail(user: { email: string; locale?: string | n
   const site = await getSettings();
   const excerpt = content.length > 500 ? content.slice(0, 500) + '…' : content;
   const title = translate(locale, 'mail.ticketTitle', { id: ticket.id + 10000, title: ticket.subject });
-  const url = `${baseUrl.replace(/\/+$/, '')}/${forAdmin ? 'admin/tickets' : 'tickets'}/${ticket.id}`;
+  const url = `${baseUrl.replace(/\/+$/, '')}/${forAdmin ? 'admin/tickets' : 'console/tickets'}/${ticket.id}`;
   const body = p(esc(translate(locale, forAdmin ? 'mail.ticketUserMessage' : 'mail.ticketReply'))) + `<blockquote style="margin:18px 0;padding:14px 18px;background:#f8fafc;border-left:3px solid #e5e8ef;font-size:14px;line-height:1.8">${escLines(excerpt)}</blockquote>` + button(url, translate(locale, 'mail.ticketButton'), locale);
   return sendMail(user.email, `【${site.siteName}】${title}`, await renderMail({ title, preheader: excerpt.slice(0, 120), body, locale, baseUrl }));
 }

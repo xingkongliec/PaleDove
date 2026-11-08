@@ -71,7 +71,7 @@ PaleDove 是一套面向 **IDC / 云服务商**的实例售卖与管理面板。
 - **在线充值**：Stripe（银行卡等）、Heleket（加密货币）、易支付（支付宝 / 微信 / QQ 钱包），支付完成后自动返回并显示到账结果
 - **费用中心**：余额、本月消费 / 充值、累计充值，充值对话框（金额档位 + 支付方式）、兑换码充值，余额明细、订单与充值记录；续费（支持多周期）与自动续费
 - **交易市场**：把自己的实例挂牌出售（公开或定向给指定用户，成交后一律用原镜像全新安装再交给买家），买家用余额购买后实例立即转入其账户；卡片显示配置、流量、续费价格与到期时间，并提供同套餐近 30 天的成交价走势；游客可在首页直接浏览，登录后购买
-- **API 令牌**：在「账号设置 → API 令牌」创建（只读或完整权限，可设有效期），用 `Authorization: Bearer pd_…` 调用控制台接口，接口文档在 `/docs/api`；只读令牌只能查询，且不能打开终端或查看实例密码；任何令牌都不能访问登录、令牌管理与实名认证等账号安全接口；找回密码后全部令牌自动吊销
+- **API 令牌**：在「账号设置 → API 令牌」创建（只读或完整权限，可设有效期），用 `Authorization: Bearer pd_…` 调用控制台接口，接口文档在 `/console/docs/api`；只读令牌只能查询，且不能打开终端或查看实例密码；任何令牌都不能访问登录、令牌管理与实名认证等账号安全接口；找回密码后全部令牌自动吊销
 
 ### 管理后台
 
@@ -193,9 +193,12 @@ pnpm dev
    curl -fsSL 'https://panel.example.com/api/agent/nodes/<令牌>/install.sh?lang=zh-CN' | bash
    ```
 
-   脚本会安装 Incus 并完成初始化、信任面板证书、开放 API 端口（若启用 UFW 会自动放行），然后回连面板注册，页面实时显示注册结果。可通过 `INCUS_SOURCE=distro` 改用发行版自带的 Incus。
+   脚本显示终端交互菜单，可选择 **ZFS / Btrfs / LVM thin / 目录**、存储来源与容量，以及是否安装 Agent、RFW 和启用规则。RFW 可逐项选择邮件、HTTP、SOCKS5、全加密流量、WireGuard、QUIC 或所有入站过滤，并配置 GeoIP 黑白名单、端口日志和网卡，下载源与规则参数沿用 Incudal。面板中的选项作为菜单默认值；已有同名存储池会复用，使用新块设备时会检查占用并要求输入清空确认。
+
+   确认后安装 Incus、初始化存储与网络、信任证书，然后回连面板同步实际配置。启用防火墙规则时会为已开启的 UFW 配置 Incus 网络放行。默认使用 `whiptail` 菜单，不可用时回退文本菜单；命令末尾改为 `| bash -s -- --text` 可强制文本模式，改为 `| bash -s -- --yes` 可使用预设无人值守安装（无终端时必须显式指定）。无人值守创建块设备池还须通过 `env PALEDOVE_ERASE_DEVICE=/dev/sdb bash -s -- --yes` 指定可清空的设备。可通过 `INCUS_SOURCE=distro` 改用发行版自带的 Incus。
 4. 在防火墙放行公网端口范围（TCP / UDP），以及 Incus API 端口（仅需对面板开放）。
 5. 需要网站绑定或站点反代时，在宿主机详情的「Caddy」中生成 Caddy 安装命令并执行（需 80 / 443 端口空闲）。Caddy 的远程管理端口只接受面板证书，请对面板开放。
+   - 脚本会保留当前站点配置、强制刷新远程管理配置，并等待证书链校验通过后注册；注册失败会显示原因并保留有效令牌供重试。出现 `certificate has expired` 时，先校准面板与宿主机的系统时间，再重新生成并执行安装命令；若仍失败，按脚本输出检查证书有效期及 Caddy 服务日志。
 6. 售卖独立 IPv4：在宿主机的「IP 地址池」添加地址。
    - **routed**（默认，适合机房路由到宿主机的附加 IP）：上联网卡填写宿主机出口网卡（如 `eth0`），Incus 会自动配置代理 ARP，实例网关为 `169.254.0.1`。安装脚本已开启 `net.ipv4.ip_forward`。
    - **bridged**（适合同一二层网络的 IP）：上联网卡填写宿主机网桥（如 `br0`），添加 IP 时同时填写前缀长度与网关。
@@ -203,6 +206,10 @@ pnpm dev
 > 已有 Incus 的服务器可选择「接入已有 Incus」：在宿主机执行 `incus config trust add paledove` 生成信任令牌并粘贴到面板，面板会自动填写 API 地址并固定服务端证书指纹。
 
 安装脚本在每次下载时读取 `server/templates/` 中的文件并注入当前参数。仅修改模板内容无需构建或重启；生产部署须包含该目录。重新生成命令会使旧安装令牌失效，已保存到宿主机的脚本需要重新下载。
+
+脚本主菜单还支持**卸载 RFW、卸载 Agent、彻底卸载 Incus 节点**，也可分别通过 `--uninstall-rfw`、`--uninstall-agent`、`--uninstall` 进入确认界面。整机卸载会删除本机所有 Incus 项目的实例、镜像、快照、卷、网络与存储池，并清理 Incus / Agent / RFW 和安装配置，需要二次确认及输入大写 `YES`；`--yes` 不能跳过删除确认。请先在后台停用节点并备份数据，脚本不会删除面板数据库记录。集群节点或资源、挂载未清理干净时停止卸载；Caddy、UFW 既有规则和通用存储工具保留。
+
+安装后可在宿主机执行 `sudo paledove-node` 打开本地卸载菜单。该命令不含面板令牌和证书，安装令牌失效或面板离线时也能使用。已有宿主机若没有该命令，先从面板下载新版安装脚本即可选择卸载。
 
 ### 售卖流程
 
@@ -221,7 +228,7 @@ curl -H "Authorization: Bearer pd_xxxxxxxx" \
      https://panel.example.com/api/instances
 ```
 
-完整接口文档位于面板的 `/docs/api`。
+完整接口文档位于面板的 `/console/docs/api`。用户控制台页面统一使用 `/console/` 前缀，例如 `/console/dashboard`、`/console/instances`、`/console/billing`、`/console/invoices` 与 `/console/marketplace`。旧控制台页面地址会自动跳转并保留查询参数与锚点。
 
 ## 配置说明
 
@@ -238,6 +245,8 @@ curl -H "Authorization: Bearer pd_xxxxxxxx" \
 | `HOST` / `PORT` | `0.0.0.0` / `3000` | 后端监听地址与端口 |
 | `NODE_ENV` | `development` | 设为 `production` 启用生产行为（含 Cookie 默认 Secure） |
 | `LOG_LEVEL` | `info` | 日志级别 |
+| `LOG_FORMAT` | `pretty` | 简洁排版与终端颜色；设为 `json` 输出结构化日志，供日志采集系统使用 |
+| `LOG_REQUESTS` | `true` | 每次请求只记录一条结果；设为 `false` 仅保留失败请求。健康检查、Agent 心跳、指标轮询等成功请求使用 `debug` 级别 |
 | `TRUST_PROXY` | `false` | 位于 Nginx / Caddy 之后时设为 `true`，以获取真实客户端 IP |
 | `COOKIE_SECURE` | production 默认 `true` | Cookie 仅通过 HTTPS 发送 |
 | `SESSION_TTL_HOURS` | `168` | 会话有效期（小时） |

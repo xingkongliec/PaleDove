@@ -17,6 +17,16 @@ export { checkDomainDns, normalizeDomain, parseUpstream, renderCaddyConfig } fro
 
 const TOKEN_TTL_MS = 24 * 3600_000;
 
+function caddyErrorMessage(error: unknown): string {
+  let cause = error;
+  for (let depth = 0; depth < 5 && cause instanceof Error; depth++) {
+    if ((cause as NodeJS.ErrnoException).code === 'CERT_HAS_EXPIRED') return t('caddy.serverCertificateExpired');
+    if ((cause as NodeJS.ErrnoException).code === 'CERT_NOT_YET_VALID') return t('caddy.serverCertificateNotYetValid');
+    cause = cause.cause;
+  }
+  return errorMessage(error);
+}
+
 export function isMockNode(node: Pick<Node, 'endpoint'>): boolean {
   return node.endpoint.startsWith('mock://');
 }
@@ -161,14 +171,12 @@ export async function registerCaddy(input: { token: string; rootCert: string; ve
       caddyCaCert: input.rootCert.trim(),
       caddyAdminPort: input.port,
       caddyVersion: input.version || null,
-      caddyTokenHash: null,
-      caddyTokenEnc: null,
-      caddyTokenExpires: null,
     },
   });
   await testCaddy(updated);
   await syncSites(updated.id);
-  return updated;
+  // Keep the installation token retryable if certificate verification or the first sync fails.
+  return prisma.node.update({ where: { id: node.id }, data: { caddyTokenHash: null, caddyTokenEnc: null, caddyTokenExpires: null } });
 }
 
 /** 演示用：模拟节点直接视为已安装 */
@@ -211,7 +219,7 @@ export async function testCaddy(node: Node): Promise<void> {
       },
     });
   } catch (err) {
-    const message = t('caddy.connectFailed', { message: errorMessage(err) });
+    const message = t('caddy.connectFailed', { message: caddyErrorMessage(err) });
     if (!firstConnect) await prisma.node.update({ where: { id: node.id }, data: { caddyStatus: 'ERROR', caddyError: message.slice(0, 1000) } });
     throw badRequest(message);
   }
@@ -281,7 +289,7 @@ export async function syncSites(nodeId: number): Promise<void> {
       await client.load(config);
       await mark('ACTIVE', null);
     } catch (err) {
-      const message = t('caddy.syncFailed', { message: errorMessage(err) }).slice(0, 500);
+      const message = t('caddy.syncFailed', { message: caddyErrorMessage(err) }).slice(0, 500);
       await mark('ERROR', message);
       throw new Error(message);
     }

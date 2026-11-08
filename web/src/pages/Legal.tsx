@@ -176,7 +176,7 @@ export default function LegalPage({ kind }: { kind?: LegalKind }) {
                 <p className="mt-1 text-[13px] leading-relaxed text-fg-3">{t('legal.questionsDesc')}</p>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Link to={me ? (me.role === 'ADMIN' ? '/admin/tickets' : '/tickets/new') : '/login?redirect=%2Ftickets%2Fnew'} className={buttonClass('primary', 'md', 'group')}>
+                <Link to={me ? (me.role === 'ADMIN' ? '/admin/tickets' : '/console/tickets/new') : '/login?redirect=%2Fconsole%2Ftickets%2Fnew'} className={buttonClass('primary', 'md', 'group')}>
                   {t('legal.contact')}
                   <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
                 </Link>

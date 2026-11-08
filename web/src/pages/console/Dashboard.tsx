@@ -61,7 +61,7 @@ function StatusPanel({ total, running, stopped, containers, vms }: { total: numb
     [<Monitor key="v" className="size-3.5" />, t('dash.vmInstances'), vms],
   ];
   return (
-    <Link to="/instances" className="page-enter group block rounded-xl border border-line bg-surface/75 p-4 backdrop-blur transition-[border-color,box-shadow] duration-200 [animation-delay:200ms] hover:border-line-strong hover:shadow-card">
+    <Link to="/console/instances" className="page-enter group block rounded-xl border border-line bg-surface/75 p-4 backdrop-blur transition-[border-color,box-shadow] duration-200 [animation-delay:200ms] hover:border-line-strong hover:shadow-card">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs text-fg-3">{t('dash.instanceOverview')}</div>
@@ -100,13 +100,13 @@ function InstanceRow({ inst }: { inst: InstanceDTO }) {
   const config = `${formatCores(inst.cpu)} / ${formatMemory(inst.memory)} / ${inst.disk} GB`;
   const expiry = <span className={cn('tabular whitespace-nowrap', left <= 0 ? 'text-danger-text' : left <= 7 ? 'text-warning-text' : 'text-fg-2')}>{daysLeftText(inst.expiresAt)}</span>;
   const manage = (
-    <Link to={`/instances/${inst.id}`} className={buttonClass('secondary', 'sm', 'group/btn whitespace-nowrap')}>
+    <Link to={`/console/instances/${inst.id}`} className={buttonClass('secondary', 'sm', 'group/btn whitespace-nowrap')}>
       {t('dash.manage')}
       <ArrowRight className="transition-transform group-hover/btn:translate-x-0.5" />
     </Link>
   );
   const name = (
-    <Link to={`/instances/${inst.id}`} className="flex min-w-0 items-center gap-2.5">
+    <Link to={`/console/instances/${inst.id}`} className="flex min-w-0 items-center gap-2.5">
       {inst.image ? <OsIcon family={inst.image.family} className="size-9 text-sm" /> : <span className="size-9 shrink-0 rounded-lg bg-surface-3" />}
       <span className="min-w-0">
         <span className="block truncate font-medium text-fg hover:underline">{inst.hostname}</span>
@@ -235,7 +235,7 @@ export default function Dashboard() {
                 {t('dash.newInstance')}
                 <ArrowRight className="transition-transform duration-200 group-hover:translate-x-0.5" />
               </Link>
-              <Link to="/billing?topup=1" className={buttonClass('secondary', 'lg', 'bg-surface/70 px-6 backdrop-blur max-sm:flex-1 max-sm:px-3')}>
+              <Link to="/console/billing?topup=1" className={buttonClass('secondary', 'lg', 'bg-surface/70 px-6 backdrop-blur max-sm:flex-1 max-sm:px-3')}>
                 {t('dash.topUpNow')}
               </Link>
             </div>
@@ -243,7 +243,7 @@ export default function Dashboard() {
           <StatusPanel total={d.instances.total} running={d.instances.running} stopped={stopped} containers={count((i) => !isVmType(i.type))} vms={count((i) => isVmType(i.type))} />
         </div>
         {/* 账户数据：首页「优惠与推广」卡片里的竖线分隔样式 */}
-        <Link to="/billing" className="grid grid-cols-2 gap-x-3 gap-y-3 border-t border-line bg-surface/70 px-4 py-3.5 backdrop-blur transition-colors hover:bg-surface sm:grid-cols-5 sm:gap-x-0 sm:px-7">
+        <Link to="/console/billing" className="grid grid-cols-2 gap-x-3 gap-y-3 border-t border-line bg-surface/70 px-4 py-3.5 backdrop-blur transition-colors hover:bg-surface sm:grid-cols-5 sm:gap-x-0 sm:px-7">
           {facts.map(([label, value, cls], i) => (
             <div
               key={label}
@@ -268,7 +268,7 @@ export default function Dashboard() {
             <p className="mt-1 text-[13px] text-fg-3">{list.length ? t('dash.instanceListSummary', { count: recent.length, total: filtered.length }) : t('instances.emptyDesc')}</p>
           </div>
           {list.length > 0 && (
-            <Link to="/instances" className={buttonClass('secondary', 'md', 'group shrink-0 max-sm:h-8 max-sm:px-2.5 max-sm:text-[13px]')}>
+            <Link to="/console/instances" className={buttonClass('secondary', 'md', 'group shrink-0 max-sm:h-8 max-sm:px-2.5 max-sm:text-[13px]')}>
               <span className="sm:hidden">{t('common.viewAll')}</span>
               <span className="max-sm:hidden">{t('dash.viewAllCount', { n: list.length })}</span>
               <ArrowRight className="transition-transform group-hover:translate-x-0.5" />

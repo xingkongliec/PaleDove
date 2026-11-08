@@ -26,14 +26,14 @@ export function OAuthBindBanner() {
     return () => window.removeEventListener(OAUTH_CHANGED, on);
   }, [refetch]);
   if (!data || data.satisfied) return null;
-  const onPage = pathname === '/account' && search.includes('tab=connections');
+  const onPage = pathname === '/console/account' && search.includes('tab=connections');
   const names = data.missing.map((p) => p.name).join(data.mode === 'all' ? t('account.connections.joinAll') : t('account.connections.joinAny'));
   return (
     <div role="status" className="fade-in mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-warning/30 bg-warning-soft px-4 py-2 text-[13px] text-warning-text">
       <Link2 className="size-4 shrink-0" />
       <span className="min-w-0 flex-1">{t('account.connections.banner', { names })}</span>
       {!onPage && (
-        <Link to="/account?tab=connections" className="shrink-0 font-medium underline">
+        <Link to="/console/account?tab=connections" className="shrink-0 font-medium underline">
           {t('account.connections.goBind')}
         </Link>
       )}

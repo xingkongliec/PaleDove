@@ -106,7 +106,7 @@ export default function InvoiceDetail() {
   return (
     <div className="space-y-5">
       <PageHeader
-        back={{ to: '/invoices', label: t('invoice.back') }}
+        back={{ to: '/console/invoices', label: t('invoice.back') }}
         title={invoice.no}
         description={`${t(typeLabel[invoice.type as InvoiceType])} · ${formatDate(invoice.createdAt)}`}
         actions={

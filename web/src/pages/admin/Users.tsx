@@ -130,7 +130,7 @@ export default function AdminUsers() {
   const impersonate = useMutation({
     mutationFn: (id: number) => api.post(`/admin/users/${id}/impersonate`),
     // 整页跳转：会话已切换为该用户，避免仍打开的管理页面（如用户详情）用新会话重新请求管理接口而报无权限
-    onSuccess: () => window.location.assign('/dashboard'),
+    onSuccess: () => window.location.assign('/console/dashboard'),
     onError: (e) => toast.fromError(e),
   });
   const kickAll = async (u: AdminUserDTO) => {

@@ -17,6 +17,9 @@ const schema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_FORMAT: z.enum(['pretty', 'json']).default('pretty'),
+  /** 常规请求只记录完成结果；关闭后仍记录失败请求。高频成功轮询使用 debug 级别。 */
+  LOG_REQUESTS: bool(true),
   /** 会话有效期（小时） */
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(168),
   /** 是否只通过 HTTPS 发送 Cookie；未设置时生产环境默认开启 */

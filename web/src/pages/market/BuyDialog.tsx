@@ -35,7 +35,7 @@ export function BuyDialog({ listing: l, onClose }: { listing: MarketListingDTO |
       toast.success(t('market.bought'), t('market.boughtDesc'));
       void qc.invalidateQueries();
       onClose();
-      navigate(`/instances/${r.instanceId}`);
+      navigate(`/console/instances/${r.instanceId}`);
     },
     onError: (e) => setError(errorText(e)),
   });
@@ -59,7 +59,7 @@ export function BuyDialog({ listing: l, onClose }: { listing: MarketListingDTO |
   ) : short ? (
     <>
       <Button onClick={onClose}>{t('common.cancel')}</Button>
-      <LinkButton to="/billing?topup=1" variant="primary">
+      <LinkButton to="/console/billing?topup=1" variant="primary">
         {t('shell.topUp')}
       </LinkButton>
     </>

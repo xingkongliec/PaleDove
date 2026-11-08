@@ -10,6 +10,7 @@ import {
   type IncusInstanceFull,
   type IncusInstanceState,
   type IncusNetwork,
+  type IncusNetworkLease,
   type IncusNetworkCreate,
   type IncusNetworkState,
   type IncusVolumeCreate,
@@ -284,6 +285,23 @@ export class MockIncusClient implements IncusApi {
       }
     }
     return out;
+  }
+
+  async getNetworkLeases(name: string): Promise<IncusNetworkLease[]> {
+    const network = await this.getNetwork(name);
+    const leases: IncusNetworkLease[] = [];
+    const gateway = network.config['ipv4.address']?.split('/')[0];
+    if (gateway && gateway !== 'none') leases.push({ hostname: `${name}.gw`, address: gateway, hwaddr: '', type: 'gateway' });
+    for (const inst of await this.listInstances()) {
+      for (const [key, device] of Object.entries(inst.expanded_devices ?? inst.devices)) {
+        if (device.type !== 'nic' || (device.network !== name && device.parent !== name)) continue;
+        for (const field of ['ipv4.address', 'ipv6.address']) {
+          const address = device[field]?.split('/')[0];
+          if (address && address !== 'none') leases.push({ hostname: inst.name, address, hwaddr: device.hwaddr ?? inst.config[`volatile.${key}.hwaddr`] ?? '', type: 'static' });
+        }
+      }
+    }
+    return leases;
   }
 
   async getInstance(name: string): Promise<IncusInstance> {

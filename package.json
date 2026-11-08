@@ -18,7 +18,7 @@
     "build:agent:release": "node agent/scripts/build.mjs --required --release",
     "test:agent": "cd agent && go test ./...",
     "test:docker": "node --test server/test/docker.test.mjs",
-    "test:startup": "node --test server/test/startup.test.mjs",
+    "test:startup": "pnpm build:server && node --test server/test/startup.test.mjs",
     "start": "pnpm --filter @paledove/server start",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

@@ -36,7 +36,7 @@ export default function DocumentsPage({ consoleView = false }: { consoleView?: b
   }, { replace: true });
   const clearFilters = () => { setSearch(''); setParams({}, { replace: true }); };
   const content = <>
-    <PageHeader title={title} description={t('documents.publicSubtitle')} actions={consoleView && <Link to="/tickets/new" className={buttonClass('secondary', 'md')}><LifeBuoy />{t('legal.contact')}</Link>} />
+    <PageHeader title={title} description={t('documents.publicSubtitle')} actions={consoleView && <Link to="/console/tickets/new" className={buttonClass('secondary', 'md')}><LifeBuoy />{t('legal.contact')}</Link>} />
     <section className="mb-5 rounded-xl border border-line bg-linear-to-br from-surface-2 to-surface p-4 sm:p-5">
       <div className="flex items-center gap-3">
         <span className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-2 sm:flex"><BookOpen className="size-5" aria-hidden /></span>

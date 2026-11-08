@@ -89,17 +89,17 @@ export default function Invoices() {
               <span className="tabular">{query.data ? t('invoice.count', { n: query.data.total }) : query.isError ? '—' : t('common.loading')}</span>
               {canReset && <button type="button" onClick={reset} className="text-fg-2 underline decoration-line-strong underline-offset-4 hover:text-fg">{t('common.reset')}</button>}
             </div>
-            <Link to="/billing" className="inline-flex shrink-0 items-center gap-1.5 text-fg-2 transition-colors hover:text-fg"><Wallet className="size-3.5" />{t('nav.billing')}</Link>
+            <Link to="/console/billing" className="inline-flex shrink-0 items-center gap-1.5 text-fg-2 transition-colors hover:text-fg"><Wallet className="size-3.5" />{t('nav.billing')}</Link>
           </div>
         </div>
         {query.isError ? <ErrorState error={query.error} onRetry={() => void query.refetch()} /> : <DataTable<InvoiceDTO>
           rows={query.data?.items}
           rowKey={(invoice) => invoice.id}
           loading={query.isLoading}
-          onRowClick={(invoice) => navigate(`/invoices/${invoice.id}`)}
+          onRowClick={(invoice) => navigate(`/console/invoices/${invoice.id}`)}
           empty={<Empty icon={<ReceiptText />} title={t(filtered ? 'invoice.noResults' : 'invoice.empty')} action={filtered ? <Button size="sm" onClick={reset}>{t('common.reset')}</Button> : undefined} />}
           columns={[
-            { key: 'no', header: t('invoice.number'), mobile: 'full', cell: (invoice) => <Link to={`/invoices/${invoice.id}`} onClick={(e) => e.stopPropagation()} className="tabular whitespace-nowrap text-xs text-fg-2 underline-offset-4 hover:text-fg hover:underline">{invoice.no}</Link> },
+            { key: 'no', header: t('invoice.number'), mobile: 'full', cell: (invoice) => <Link to={`/console/invoices/${invoice.id}`} onClick={(e) => e.stopPropagation()} className="tabular whitespace-nowrap text-xs text-fg-2 underline-offset-4 hover:text-fg hover:underline">{invoice.no}</Link> },
             { key: 'name', header: t('invoice.name'), mobile: 'title', className: 'w-[27%] min-w-48', cell: (invoice) => {
               const config = invoice.purchaseConfig;
               const title = config ? `${config.product} / ${config.plan}` : invoice.plan ? `${invoice.plan.product} / ${invoice.plan.name}` : invoice.instance?.hostname ?? invoice.description;
@@ -110,7 +110,7 @@ export default function Invoices() {
             { key: 'status', header: t('invoice.paymentStatus'), cell: (invoice) => <Badge dot tone={statusTone[invoice.status]} className="rounded-md px-2 py-1.5 ring-0">{t(statusLabel[invoice.status])}</Badge> },
             { key: 'createdAt', header: t('invoice.createdAt'), cell: (invoice) => <InvoiceTime value={invoice.createdAt} /> },
             { key: 'updatedAt', header: t('common.updatedAt'), cell: (invoice) => invoice.updatedAt !== invoice.createdAt ? <InvoiceTime value={invoice.updatedAt} /> : <span className="whitespace-nowrap text-xs text-fg-3">{t('invoice.noUpdates')}</span> },
-            { key: 'actions', header: t('common.actions'), headerClassName: 'text-right', className: 'border-l border-line/70 text-right', cell: (invoice) => <LinkButton size="sm" to={`/invoices/${invoice.id}`} onClick={(e) => e.stopPropagation()} className="h-8 px-3.5">{t('invoice.viewDetails')}</LinkButton> },
+            { key: 'actions', header: t('common.actions'), headerClassName: 'text-right', className: 'border-l border-line/70 text-right', cell: (invoice) => <LinkButton size="sm" to={`/console/invoices/${invoice.id}`} onClick={(e) => e.stopPropagation()} className="h-8 px-3.5">{t('invoice.viewDetails')}</LinkButton> },
           ]}
         />}
         {query.data && !query.isError && <Pagination page={page} pageSize={pageSize} total={query.data.total} onChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} pageSizes={[20, 50, 100]} />}

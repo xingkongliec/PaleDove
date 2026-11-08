@@ -129,7 +129,7 @@ export function Notifications() {
               )}
             </div>
             <Link
-              to={admin ? '/admin/notifications' : '/notifications'}
+              to={admin ? '/admin/notifications' : '/console/notifications'}
               onClick={() => setOpen(false)}
               className="flex items-center justify-center gap-1 border-t border-line py-2.5 text-[13px] text-fg-2 transition-colors hover:bg-surface-2 hover:text-fg"
             >

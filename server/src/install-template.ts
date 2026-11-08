@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-type InstallTemplate = 'install.sh' | 'caddy.sh' | 'agent-install.sh' | 'agent-setup.sh';
+type InstallTemplate = 'install.sh' | 'install-ui.sh' | 'node-uninstall.sh' | 'node-manage.sh' | 'caddy.sh' | 'agent-install.sh' | 'agent-setup.sh';
 
 // 源码在 src/，生产入口在 dist/，均从服务目录的 templates/ 读取最新脚本。
 export const installTemplateDirectory = new URL('../templates/', import.meta.url);

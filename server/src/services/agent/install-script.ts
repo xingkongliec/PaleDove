@@ -43,6 +43,8 @@ export interface NodeInstallOptions {
 }
 
 export function renderNodeInstallScript(o: NodeInstallOptions): string {
+  const ui = renderInstallTemplate('install-ui.sh', {});
+  const uninstall = renderInstallTemplate('node-uninstall.sh', {});
   return renderInstallTemplate('install.sh', {
     NODE_NAME: o.nodeName.replace(/[\r\n]/g, ' '),
     PANEL_URL: shq(o.panelUrl),
@@ -63,11 +65,17 @@ export function renderNodeInstallScript(o: NodeInstallOptions): string {
     INSTALL_AGENT: shq(o.installAgent !== false ? 1 : 0),
     INSTALL_FIREWALL: shq(o.installFirewall ? 1 : 0),
     ENABLE_FIREWALL_RULES: shq(o.enableFirewallRules ? 1 : 0),
+    AGENT_AVAILABLE: shq(o.agentInstallToken ? 1 : 0),
+    INSTALL_UI: ui,
+    NODE_UNINSTALL: uninstall,
+    NODE_MANAGEMENT: renderInstallTemplate('node-manage.sh', { INSTALL_UI: ui, NODE_UNINSTALL: uninstall }),
     PANEL_CERT: o.panelCert.trim(),
-    AGENT_INSTALL: o.agentInstallToken && o.installAgent !== false ? `${agentSetupSection(o.panelUrl)}
+    AGENT_INSTALL: o.agentInstallToken ? `${agentSetupSection(o.panelUrl)}
 
-info "安装宿主机 Agent / installing the host agent"
-install_paledove_agent ${shq(o.agentInstallToken)} || warn "宿主机 Agent 安装失败，可稍后在面板中重新安装 / agent install failed"
+if [ "$INSTALL_AGENT" = 1 ]; then
+  info "安装宿主机 Agent / installing the host agent"
+  install_paledove_agent ${shq(o.agentInstallToken)} || warn "宿主机 Agent 安装失败，可稍后在面板中重新安装 / agent install failed"
+fi
 
 ` : '',
   });

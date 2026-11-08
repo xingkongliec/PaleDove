@@ -28,7 +28,7 @@ interface VpcScope {
   /** 点击实例链接时（管理员在弹窗里需要先关闭弹窗） */
   onNavigate?: () => void;
 }
-const USER_SCOPE: VpcScope = { base: '/vpcs', queryKey: ['vpcs'], admin: false, instanceHref: (id) => `/instances/${id}` };
+const USER_SCOPE: VpcScope = { base: '/vpcs', queryKey: ['vpcs'], admin: false, instanceHref: (id) => `/console/instances/${id}` };
 const ScopeContext = createContext<VpcScope>(USER_SCOPE);
 
 /** 位置说明：与哪些实例在同一台宿主机 */

@@ -43,6 +43,7 @@ import { listEnabledImages } from './store.ts';
 import { syncInstanceHostname } from '../services/operations.ts';
 import { assertDomainAvailable, checkDomainDns, normalizeDomain, syncSitesSafe } from '../services/gateway.ts';
 import { getLiveState, getMetricSeries } from '../services/metrics.ts';
+import { guestAgentUnavailable } from '../services/agent/guest-exec.ts';
 import { addPortMapping, removePortMapping } from '../services/portmap.ts';
 import { addVolume, removeVolume, toVolume } from '../services/volumes.ts';
 import { assertNotListed } from '../services/market.ts';
@@ -367,7 +368,6 @@ export async function instanceDetailRoutes(app: FastifyInstance, { admin = false
       if (inst.status !== 'RUNNING') return t('terminal.notRunning');
       const client = await getIncus(inst.node);
       const session = await client.openTerminal(inst.name, opts).catch(async (error: unknown) => {
-        const { guestAgentUnavailable } = await import('../services/agent/guest-exec.ts');
         if (!isVmType(inst.type) || !guestAgentUnavailable(error)) throw error;
         opts.onData(Buffer.from(t('terminal.serialFallback') + '\r\n'));
         return client.openConsole(inst.name, 'console', opts);

@@ -114,7 +114,7 @@ export function ApiTokensCard() {
         <CardHeader
           title={t('account.tokens.example')}
           actions={
-            <LinkButton to="/docs/api" size="sm" icon={<BookOpen className="size-3.5" />}>
+            <LinkButton to="/console/docs/api" size="sm" icon={<BookOpen className="size-3.5" />}>
               {t('apiDocs.open')}
             </LinkButton>
           }

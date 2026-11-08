@@ -709,11 +709,11 @@ export default function ApiDocs() {
   return (
     <>
       <PageHeader
-        back={{ to: '/account?tab=tokens', label: t('apiDocs.manageTokens') }}
+        back={{ to: '/console/account?tab=tokens', label: t('apiDocs.manageTokens') }}
         title={t('apiDocs.title')}
         description={t('apiDocs.desc')}
         actions={
-          <LinkButton to="/account?tab=tokens" icon={<KeyRound />}>
+          <LinkButton to="/console/account?tab=tokens" icon={<KeyRound />}>
             {t('apiDocs.manageTokens')}
           </LinkButton>
         }

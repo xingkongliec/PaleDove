@@ -98,7 +98,7 @@ function TaskList() {
               header: t('common.instance'),
               cell: (task) =>
                 task.instanceId ? (
-                  <Link className="font-mono text-xs font-medium text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg" to={`/instances/${task.instanceId}`}>
+                  <Link className="font-mono text-xs font-medium text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg" to={`/console/instances/${task.instanceId}`}>
                     {task.instanceName ?? `#${task.instanceId}`}
                   </Link>
                 ) : (

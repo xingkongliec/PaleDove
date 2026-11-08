@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { logActivity, panelUrl, parse } from '../lib/http.ts';
 import { isIPv4 } from '../lib/ip.ts';
 import { currentLocale, t } from '../i18n/index.ts';
-import { normalizeLocale } from '../shared/index.ts';
+import { normalizeLocale, STORAGE_DRIVERS } from '../shared/index.ts';
 import { initialCaddyConfig, nodeByCaddyToken, registerCaddy } from '../services/gateway.ts';
 import { renderAgentInstallScript, renderCaddyInstallScript } from '../services/agent/install-script.ts';
 import { AGENT_REPORT_INTERVAL, consumeAgentInstallToken, issueAgentInstallToken, nodeByAgentToken, saveHostReport, signResponse, verifySignedRequest, vmLimitsText } from '../services/agent/agent.ts';
@@ -84,6 +84,13 @@ export default async function agentRoutes(app: FastifyInstance) {
         version: z.string().max(64).optional(),
         ipv6Address: z.string().max(64).optional(),
         ipv6Interface: z.string().max(32).optional(),
+        storagePool: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/).optional(),
+        storageDriver: z.enum(STORAGE_DRIVERS).optional(),
+        storageSource: z.string().max(512).regex(/^[^\x00-\x1f\x7f]*$/).optional(),
+        storageSize: z.string().max(64).regex(/^\d+(\.\d+)?\s*(MiB|GiB|TiB|MB|GB|TB)$/i).optional(),
+        installAgent: z.boolean().optional(),
+        installFirewall: z.boolean().optional(),
+        enableFirewallRules: z.boolean().optional(),
       }),
       req.body,
     );

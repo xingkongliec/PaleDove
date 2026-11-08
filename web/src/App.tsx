@@ -35,6 +35,7 @@ import { queryClient, useMe, usePublicConfig } from './lib/queries';
 import { loaders } from './lib/routes';
 import { PublicLayout } from './components/landing/PublicShell';
 import LoginPage from './pages/auth/Login';
+import { consoleRedirect, LEGACY_CONSOLE_PATHS } from './shared/index';
 
 // 页面按路由拆分：首屏只加载布局和当前页，其余在访问时下载；加载函数与预加载共用（lib/routes.ts）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,15 +91,15 @@ const AdminSettings = def(loaders.adminSettings);
 
 /** 用户侧边栏；「邀请推广」在管理员开启推广返利后显示 */
 const userNav = (aff: boolean): NavGroup[] => [
-  { items: [{ to: '/dashboard', label: 'nav.dashboard', icon: <LayoutGrid />, end: true }] },
+  { items: [{ to: '/console/dashboard', label: 'nav.dashboard', icon: <LayoutGrid />, end: true }] },
   {
     title: 'nav.group.cloud',
     items: [
       // 购买实例不单列，从实例列表等入口进入，侧边栏高亮“实例”
-      { to: '/instances', label: 'nav.instances', icon: <Server />, also: ['/console/store'] },
-      { to: '/vpc', label: 'nav.vpc', icon: <Network /> },
-      { to: '/terminal', label: 'nav.terminal', icon: <SquareTerminal /> },
-      { to: '/transfer', label: 'nav.transfer', icon: <ArrowRightLeft /> },
+      { to: '/console/instances', label: 'nav.instances', icon: <Server />, also: ['/console/store'] },
+      { to: '/console/vpc', label: 'nav.vpc', icon: <Network /> },
+      { to: '/console/terminal', label: 'nav.terminal', icon: <SquareTerminal /> },
+      { to: '/console/transfer', label: 'nav.transfer', icon: <ArrowRightLeft /> },
       { to: '/console/marketplace', label: 'nav.market', icon: <MarketIcon />, end: true },
       { to: '/console/marketplace/mine', label: 'nav.marketMine', icon: <TagIcon /> },
     ],
@@ -106,14 +107,14 @@ const userNav = (aff: boolean): NavGroup[] => [
   {
     title: 'nav.group.manage',
     items: [
-      { to: '/activity', label: 'nav.activity', icon: <ScrollText /> },
-      { to: '/billing', label: 'nav.billing', icon: <Wallet /> },
-      { to: '/invoices', label: 'nav.invoices', icon: <ReceiptText /> },
-      ...(aff ? [{ to: '/invite', label: 'nav.invite' as const, icon: <Gift /> }] : []),
-      { to: '/tickets', label: 'ticket.title', icon: <MessagesSquare /> },
+      { to: '/console/activity', label: 'nav.activity', icon: <ScrollText /> },
+      { to: '/console/billing', label: 'nav.billing', icon: <Wallet /> },
+      { to: '/console/invoices', label: 'nav.invoices', icon: <ReceiptText /> },
+      ...(aff ? [{ to: '/console/invite', label: 'nav.invite' as const, icon: <Gift /> }] : []),
+      { to: '/console/tickets', label: 'ticket.title', icon: <MessagesSquare /> },
       { to: '/console/documents', label: 'documents.publicCenter', icon: <BookOpen /> },
       // API 文档从“账号设置 → API 令牌”进入
-      { to: '/account', label: 'nav.account', icon: <UserCog />, also: ['/docs/api'] },
+      { to: '/console/account', label: 'nav.account', icon: <UserCog />, also: ['/console/docs/api'] },
     ],
   },
 ];
@@ -157,8 +158,8 @@ function RequireAuth({ admin = false, children }: { admin?: boolean; children: R
   const { data: me, isLoading } = useMe();
   const location = useLocation();
   if (isLoading) return <FullPageLoading />;
-  if (!me) return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} replace />;
-  if (admin && me.role !== 'ADMIN') return <Navigate to="/dashboard" replace />;
+  if (!me) return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />;
+  if (admin && me.role !== 'ADMIN') return <Navigate to="/console/dashboard" replace />;
   if (!admin && me.role !== 'USER') return <Navigate to="/admin" replace />;
   return <>{children}</>;
 }
@@ -174,6 +175,11 @@ function MarketLayout({ active, adminTo }: { active: string; adminTo?: string })
 /** 懒加载页面；布局外的整页（如首页）传入 FullPageLoading 作为占位 */
 function Lazy({ children, fallback = <PageLoading /> }: { children: ReactNode; fallback?: ReactNode }) {
   return <Suspense fallback={fallback}>{children}</Suspense>;
+}
+
+function LegacyConsoleRedirect() {
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={`${consoleRedirect(pathname) ?? '/console/dashboard'}${search}${hash}`} replace />;
 }
 
 export default function App() {
@@ -200,7 +206,7 @@ export default function App() {
     // 会话失效时清空缓存并回到登录页
     setUnauthorizedHandler(() => {
       queryClient.setQueryData(['me'], null);
-      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname)}`, { replace: true });
+      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`, { replace: true });
     });
   }, [navigate]);
 
@@ -226,36 +232,39 @@ export default function App() {
       <Route element={<MarketLayout active="market" />}>
         <Route path="/market" element={<Lazy><MarketPage /></Lazy>} />
       </Route>
+      {LEGACY_CONSOLE_PATHS.map((path) => <Route key={path} path={`${path}/*`} element={<LegacyConsoleRedirect />} />)}
       <Route
+        path="/console"
         element={
           <RequireAuth>
             <AppShell nav={userNav(!!site?.affEnabled)} area="user" />
           </RequireAuth>
         }
       >
-        <Route path="/dashboard" element={<Lazy><Dashboard /></Lazy>} />
-        <Route path="/instances" element={<Lazy><Instances /></Lazy>} />
-        <Route path="/vpc" element={<Lazy><Vpcs /></Lazy>} />
-        <Route path="/instances/:id" element={<Lazy><InstanceDetail /></Lazy>} />
-        <Route path="/billing" element={<Lazy><Billing /></Lazy>} />
-        <Route path="/invoices" element={<Lazy><Invoices /></Lazy>} />
-        <Route path="/invoices/:id" element={<Lazy><InvoiceDetail /></Lazy>} />
-        <Route path="/invite" element={<Lazy><Affiliate /></Lazy>} />
-        <Route path="/account" element={<Lazy><Account /></Lazy>} />
-        <Route path="/terminal" element={<Lazy><TerminalPage /></Lazy>} />
-        <Route path="/docs/api" element={<Lazy><ApiDocs /></Lazy>} />
-        <Route path="/transfer" element={<Lazy><TransferPage /></Lazy>} />
+        <Route index element={<Navigate to="/console/dashboard" replace />} />
+        <Route path="dashboard" element={<Lazy><Dashboard /></Lazy>} />
+        <Route path="instances" element={<Lazy><Instances /></Lazy>} />
+        <Route path="vpc" element={<Lazy><Vpcs /></Lazy>} />
+        <Route path="instances/:id" element={<Lazy><InstanceDetail /></Lazy>} />
+        <Route path="billing" element={<Lazy><Billing /></Lazy>} />
+        <Route path="invoices" element={<Lazy><Invoices /></Lazy>} />
+        <Route path="invoices/:id" element={<Lazy><InvoiceDetail /></Lazy>} />
+        <Route path="invite" element={<Lazy><Affiliate /></Lazy>} />
+        <Route path="account" element={<Lazy><Account /></Lazy>} />
+        <Route path="terminal" element={<Lazy><TerminalPage /></Lazy>} />
+        <Route path="docs/api" element={<Lazy><ApiDocs /></Lazy>} />
+        <Route path="transfer" element={<Lazy><TransferPage /></Lazy>} />
         {/* 控制台里的购买页与交易市场（/console/...）；从首页进入的 /store、/market 在公开页外壳里 */}
-        <Route path="/console/store" element={<Lazy><Store /></Lazy>} />
-        <Route path="/console/marketplace" element={<Lazy><MarketPage /></Lazy>} />
-        <Route path="/console/marketplace/mine" element={<Lazy><MyListingsPage /></Lazy>} />
-        <Route path="/console/documents" element={<Lazy><DocumentsPage consoleView /></Lazy>} />
-        <Route path="/console/documents/:slug" element={<Lazy><DocumentDetail /></Lazy>} />
-        <Route path="/activity" element={<Lazy><Activity /></Lazy>} />
-        <Route path="/notifications" element={<Lazy><Notifications /></Lazy>} />
-        <Route path="/tickets" element={<Lazy><Tickets /></Lazy>} />
-        <Route path="/tickets/new" element={<Lazy><Tickets create /></Lazy>} />
-        <Route path="/tickets/:id" element={<Lazy><Tickets /></Lazy>} />
+        <Route path="store" element={<Lazy><Store /></Lazy>} />
+        <Route path="marketplace" element={<Lazy><MarketPage /></Lazy>} />
+        <Route path="marketplace/mine" element={<Lazy><MyListingsPage /></Lazy>} />
+        <Route path="documents" element={<Lazy><DocumentsPage consoleView /></Lazy>} />
+        <Route path="documents/:slug" element={<Lazy><DocumentDetail /></Lazy>} />
+        <Route path="activity" element={<Lazy><Activity /></Lazy>} />
+        <Route path="notifications" element={<Lazy><Notifications /></Lazy>} />
+        <Route path="tickets" element={<Lazy><Tickets /></Lazy>} />
+        <Route path="tickets/new" element={<Lazy><Tickets create /></Lazy>} />
+        <Route path="tickets/:id" element={<Lazy><Tickets /></Lazy>} />
       </Route>
       <Route
         path="/admin"

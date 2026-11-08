@@ -368,6 +368,7 @@ export const en: Record<ServerMessageKey, string> = {
   'node.noIpv4Network': 'Network {network} has no IPv4, so NAT instances cannot be created',
   'node.natNotSynced': 'The node NAT subnet has not been synchronized',
   'node.privateIpExhausted': 'No private addresses left on this node',
+  'task.privateIpRepairUnsafe': 'Private IP repair requires a stopped, panel-owned instance that has never been provisioned',
   'port.outOfRange': 'Public port must be between {start} and {end}',
   'port.taken': 'Public port {port} is already in use',
   'port.exhausted': 'No ports left on this node',
@@ -476,6 +477,8 @@ export const en: Record<ServerMessageKey, string> = {
   'caddy.notInstalled': 'Caddy is not installed on this node',
   'caddy.invalidUpstream': 'Invalid upstream, e.g. 10.0.0.5:8080 or https://example.com',
   'caddy.connectFailed': 'Cannot reach the Caddy admin API: {message}',
+  'caddy.serverCertificateExpired': 'The Caddy admin server certificate chain has expired. Check that panel and host clocks are synchronized, then regenerate and run the Caddy installer to refresh its admin certificate. Existing sites are preserved',
+  'caddy.serverCertificateNotYetValid': 'The Caddy admin server certificate is not valid yet. Synchronize the panel and host clocks, then verify the connection again',
 
   'node.notFound': 'Node not found',
   'ops.notOnNode': 'The instance does not exist or is not on this node',
