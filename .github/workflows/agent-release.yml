@@ -1,0 +1,74 @@
+name: Agent Build and Release
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - server/src/shared/products.ts
+    tags:
+      - 'agent-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/agent-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache: false
+      - name: Read Agent version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node --input-type=module -e "import{readFileSync}from'node:fs';console.log(/HOST_AGENT_RELEASE = '([^']+)'/.exec(readFileSync('server/src/shared/products.ts','utf8'))[1])")
+          tag="agent-v${version}"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo 'Tag does not match HOST_AGENT_RELEASE' >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test Agent
+        if: steps.version.outputs.publish == 'true'
+        working-directory: agent
+        run: go test ./...
+      - name: Build release assets
+        if: steps.version.outputs.publish == 'true'
+        run: node agent/scripts/build.mjs --required --release
+      - name: Publish immutable Agent release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_VERSION: ${{ steps.version.outputs.value }}
+          AGENT_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          flags=(--latest=false)
+          if [[ "$AGENT_VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$AGENT_TAG" \
+            "agent/dist/release/paledove-agent-x86_64-v${AGENT_VERSION}" \
+            "agent/dist/release/paledove-agent-aarch64-v${AGENT_VERSION}" \
+            agent/dist/release/SHA256SUMS agent/dist/release/manifest.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Agent v${AGENT_VERSION}" --notes "PaleDove host Agent v${AGENT_VERSION}" "${flags[@]}"

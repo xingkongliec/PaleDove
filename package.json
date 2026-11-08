@@ -1,0 +1,35 @@
+{
+  "name": "paledove",
+  "private": true,
+  "version": "0.1.0",
+  "description": "基于 Incus 的 IDC 云服务器售卖面板",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @paledove/server --filter @paledove/web dev",
+    "dev:server": "pnpm --filter @paledove/server dev",
+    "dev:web": "pnpm --filter @paledove/web dev",
+    "build:web": "pnpm --filter @paledove/web build",
+    "build:server": "pnpm --filter @paledove/server build",
+    "build": "pnpm --filter @paledove/web build && pnpm --filter @paledove/server build",
+    "build:agent": "node agent/scripts/build.mjs --required",
+    "build:agent:release": "node agent/scripts/build.mjs --required --release",
+    "test:agent": "cd agent && go test ./...",
+    "test:docker": "node --test server/test/docker.test.mjs",
+    "test:startup": "node --test server/test/startup.test.mjs",
+    "start": "pnpm --filter @paledove/server start",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @paledove/server db:generate",
+    "db:migrate": "pnpm --filter @paledove/server db:migrate",
+    "db:deploy": "pnpm --filter @paledove/server db:deploy",
+    "db:seed": "pnpm --filter @paledove/server db:seed",
+    "i18n:tw": "tsx server/scripts/gen-zh-tw.mts"
+  },
+  "devDependencies": {
+    "opencc-js": "1.4.2",
+    "tsx": "^4.23.15"
+  }
+}

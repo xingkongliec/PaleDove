@@ -1,0 +1,18 @@
+packages:
+  - server
+  - web
+
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - better-sqlite3
+  - "@node-rs/argon2"
+  - esbuild
+  - prisma
+  - "@tailwindcss/oxide"
+  - core-js
+
+# 修复间接依赖的已知漏洞（pnpm audit）：只升级补丁 / 次版本
+overrides:
+  "fast-uri@>=3.0.0 <3.1.9": "^3.1.9"
+  "fast-uri@>=4.0.0 <4.2.3": "^4.2.3"
+  "ip-address@<10.7.4": "^10.7.4"

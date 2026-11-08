@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*
+!.env.example
+*.log
+server/src/generated/
+server/data/
+server/certs/incus/*
+!server/certs/incus/README.md
+server/prisma/sqlite/
+.DS_Store
+coverage/
+/*.zip

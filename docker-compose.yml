@@ -1,0 +1,38 @@
+# 只部署面板，连接项目根目录 .env 中配置的外部 PostgreSQL 与 Redis。
+# 需要 Docker Compose 2.30+（env_file raw 格式，保留密码中的 $ 等字符）。
+services:
+  panel:
+    build:
+      context: .
+      target: runtime
+    image: paledove:local
+    pull_policy: build
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - path: .env
+        format: raw
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      WEB_DIST: /app/web/dist
+      UPLOAD_DIR: /app/server/data/uploads
+      INCUS_CERT_DIR: /app/server/certs/incus
+      AGENT_RELEASE_CACHE_DIR: /app/server/data/agent-release-cache
+    ports:
+      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - panel-data:/app/server/data
+      - type: bind
+        source: ./server/certs/incus
+        target: /app/server/certs/incus
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  panel-data:

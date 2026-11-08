@@ -1,0 +1,1367 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── 用户 ─────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  email        String     @unique
+  username     String     @unique
+  passwordHash String
+  emailVerifiedAt DateTime?
+  announceEmail Boolean @default(true)
+  balanceAlert Boolean @default(true)
+  alertEmail Boolean @default(true)
+  /// 昵称（显示名称）
+  name         String?
+  /// 头像风格（DiceBear，见 server/src/shared/avatar.ts）
+  avatarStyle  String     @default("bigSmile")
+  /// 头像形象编号：同一风格下生成不同的形象
+  avatarVariant Int       @default(0)
+  role         Role       @default(USER)
+  status       UserStatus @default(ACTIVE)
+  balance      Decimal    @default(0) @db.Decimal(12, 2)
+  remark       String?
+  lastLoginAt  DateTime?
+  lastLoginIp  String?
+  /// 界面语言：zh-CN / zh-TW / en
+  locale       String?
+  /// 国家或地区（ISO 3166-1 alpha-2）
+  country      String?
+  /// 外观：light / dark / system
+  theme        String?
+  /// 两步验证（TOTP）：开始设置时写入密钥（加密），确认验证码后才记录启用时间
+  totpSecretEnc String?
+  totpEnabledAt DateTime?
+  /// 最近一次使用的验证码时间步，同一个验证码不能重复使用
+  totpLastStep  Int?
+  /// 恢复码的 sha256（JSON 数组），每个只能使用一次
+  recoveryCodes String     @default("[]")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  instances   Instance[]
+  orders      Order[]
+  invoices    Invoice[]
+  balanceLogs BalanceLog[]
+  tasks       Task[]
+  redeemed    RedeemCode[]
+  activities  ActivityLog[]
+  payments    Payment[]
+  messages    Message[]
+  announcementReads AnnouncementRead[]
+  oauthAccounts OAuthAccount[]
+  passkeys     Passkey[]
+  couponUsages CouponUsage[]
+  vpcs         Vpc[]
+  redeemUsages RedeemUsage[]
+  verification RealNameVerification?
+  apiTokens    ApiToken[]
+  sshKeys      SshKey[]
+  emailTokens EmailVerificationToken[]
+  resetTokens PasswordResetToken[]
+  tickets Ticket[]
+  ticketMessages TicketMessage[]
+  transfersOut InstanceTransfer[] @relation("TransferFrom")
+  transfersIn  InstanceTransfer[] @relation("TransferTo")
+  marketSold      MarketListing[] @relation("MarketSeller")
+  marketBought    MarketListing[] @relation("MarketBuyer")
+  marketTargeted  MarketListing[] @relation("MarketTarget")
+  /// 推广码（第一次打开推广页面时生成）
+  affCode      String?    @unique
+  /// 邀请人：通过推广链接注册时记录
+  referrerId   Int?
+  referrer     User?      @relation("Referral", fields: [referrerId], references: [id], onDelete: SetNull)
+  referrals    User[]     @relation("Referral")
+  /// 推广佣金：尚未转入余额的部分
+  affBalance   Decimal    @default(0) @db.Decimal(12, 2)
+  /// 可返佣额度：通过支付渠道充值到账的金额（不含手续费），下单时按订单净额扣减并作为返佣基数；赠送、兑换、调整的余额不计入
+  affCredit    Decimal    @default(0) @db.Decimal(12, 2)
+  affLogs      AffLog[]   @relation("AffOwner")
+  affInvitees  AffLog[]   @relation("AffInvitee")
+}
+
+model EmailVerificationToken {
+  id Int @id @default(autoincrement())
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
+
+model PasswordResetToken {
+  id Int @id @default(autoincrement())
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
+
+model Ticket {
+  id Int @id @default(autoincrement())
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject String
+  category String @default("other")
+  priority String @default("NORMAL")
+  status String @default("OPEN")
+  resourceRef Int?
+  resourceName String?
+  lastReplyAt DateTime @default(now())
+  closedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages TicketMessage[]
+  attachments TicketAttachment[]
+  @@index([userId, updatedAt])
+  @@index([status, lastReplyAt])
+}
+
+model TicketMessage {
+  id Int @id @default(autoincrement())
+  ticketId Int
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId Int
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  content String
+  isAdmin Boolean @default(false)
+  createdAt DateTime @default(now())
+  attachments TicketAttachment[]
+  @@index([ticketId, id])
+}
+
+model TicketAttachment {
+  id Int @id @default(autoincrement())
+  ticketId Int
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  messageId Int
+  message TicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  fileName String
+  mimeType String
+  size Int
+  storageKey String @unique
+  createdAt DateTime @default(now())
+  @@index([ticketId])
+  @@index([messageId])
+}
+
+// ───────────────────────────── 节点 ─────────────────────────────
+
+enum NodeStatus {
+  PENDING
+  ONLINE
+  OFFLINE
+  UNKNOWN
+}
+
+enum NetworkMode {
+  /// 仅 IPv4 NAT（端口映射）
+  NAT
+  /// IPv4 NAT + 每个实例一个公网 IPv6
+  NAT_IPV6
+  /// 实例只有公网 IPv6，不提供 IPv4 端口映射
+  IPV6_ONLY
+  /// 每个实例一个独立公网 IPv4（地址池）
+  IPV4
+  /// 独立公网 IPv4 + 公网 IPv6
+  IPV4_IPV6
+}
+
+enum PublicNicMode {
+  ROUTED
+  BRIDGED
+}
+
+enum CaddyStatus {
+  NONE
+  PENDING
+  READY
+  ERROR
+}
+
+model Node {
+  id                Int      @id @default(autoincrement())
+  name              String
+  /// 展示给用户的地区名，默认取国家或地区的名称
+  region            String
+  /// 国家或地区（ISO 3166-1 alpha-2）
+  country           String   @default("")
+  description       String   @default("")
+  /// 宿主机公告：显示在该宿主机上全部实例的实例管理页面（为空不显示）
+  announcement      String   @default("")
+  /// 智能分流：开启后可在该宿主机配置出口（WireGuard / SOCKS5 / HTTP），由宿主机 Agent 执行，用户可为 NAT 实例切换出口
+  egressEnabled     Boolean  @default(false)
+  egresses          NodeEgress[]
+  networkMode       NetworkMode @default(NAT)
+  /// https://host:8443 | unix:///var/lib/incus/unix.socket | mock://<anything>；由连接地址与 API 端口生成
+  endpoint          String   @default("")
+  /// 服务端证书 SHA-256 指纹（十六进制，无冒号），用于证书固定
+  serverFingerprint String?
+  project           String   @default("default")
+  storagePool       String   @default("default")
+  profile           String   @default("default")
+  /// 宿主机公网 IPv4，NAT 端口映射与网站反代使用；安装脚本注册时可自动探测
+  publicIp          String   @default("")
+  /// 展示给用户的公网 IPv6；留空则不开启 IPv6 端口映射
+  publicIpv6        String   @default("")
+
+  // NAT 网络
+  natNetwork       String  @default("incusbr0")
+  /// 由节点同步得到，例如 10.120.0.1/24
+  natCidr          String?
+  /// 端口映射实际绑定的地址，留空为 0.0.0.0
+  natListenAddress String  @default("")
+  /// IPv6 端口映射绑定的地址，留空为 ::
+  natListenAddressV6 String @default("")
+  /// 分配给实例的 IPv6 子网，例如 2001:db8::/48；IPv6 模式下必填，可由安装脚本检测回填
+  ipv6Subnet       String  @default("")
+  /// IPv6 routed 网卡的宿主机父接口，例如 eth0
+  ipv6Parent       String  @default("")
+  portRangeStart   Int     @default(20000)
+  portRangeEnd     Int     @default(60000)
+
+  // 独立 IPv4
+  publicNicMode   PublicNicMode @default(ROUTED)
+  /// routed: 宿主机上联网卡（可为空）；bridged: 桥接网卡名
+  publicNicParent String?
+  dnsServers      String        @default("1.1.1.1,8.8.8.8")
+
+  // 一键安装脚本
+  apiPort              Int       @default(8443)
+  /// 安装时创建的默认存储池驱动：zfs / btrfs / lvm / dir
+  storageDriver        String    @default("btrfs")
+  /// 块设备或目录，留空则创建 loop 文件
+  storageSource        String?
+  storageSize          String    @default("100GiB")
+  /// 安装时配置的 NAT 网段，例如 10.88.0.1/16
+  natCidrInstall       String    @default("10.88.0.1/16")
+  /// 安装令牌（SHA-256），一次性使用
+  installTokenHash     String?   @unique
+  installTokenExpires  DateTime?
+  /// 安装令牌（加密保存），有效期内再次查看安装命令时沿用，不重新签发
+  installTokenEnc      String?
+  installedAt          DateTime?
+  incusVersion         String?
+  /// 宿主机架构（x86_64 / aarch64，其他架构保留 Incus 原值），连接与健康检查时记录；为空表示尚未读取
+  arch                 String?
+
+  /// 宿主机 Agent 的密钥（SHA-256）；旧版 bash 上报程序直接用它作为 Bearer 令牌
+  agentTokenHash       String?
+  /// Agent 密钥（加密保存），用于校验签名请求；每次安装 Agent 都会更换
+  agentTokenEnc        String?
+  /// 节点测试：由 Agent 每小时向国内三网目标 Ping，结果展示在购买页
+  pingEnabled          Boolean  @default(false)
+
+  // 宿主机一键安装脚本选项
+  installAgent         Boolean  @default(true)
+  installFirewall      Boolean  @default(false)
+  enableFirewallRules  Boolean  @default(false)
+
+  // 宿主机 Caddy（网站反代），面板通过 Caddy 远程管理 API（mTLS）下发配置
+  caddyStatus          CaddyStatus @default(NONE)
+  caddyAdminPort       Int         @default(2021)
+  /// Caddy 本地 CA 根证书，用于校验远程管理端点
+  caddyCaCert          String?
+  caddyError           String?
+  caddyTokenHash       String?     @unique
+  caddyTokenExpires    DateTime?
+  caddyTokenEnc        String?
+  caddyVersion         String?
+
+  /// 宿主机流量：每周期额度（GB，0 为不限）、每月重置日（1-28）与计算方式（汇总本机所有实例的流量）
+  trafficLimit     Int         @default(0)
+  trafficResetDay  Int         @default(1)
+  trafficMode      TrafficMode @default(BOTH)
+
+  maxInstances  Int        @default(100)
+  /// 购买这台宿主机上的实例前需要通过实名认证
+  requireRealName   Boolean  @default(false)
+  /// 可用的系统镜像 ID 列表；为空（null）时使用面板的全部默认镜像
+  imageIds          Json?
+  enabled       Boolean    @default(true)
+  status        NodeStatus @default(UNKNOWN)
+  lastCheckedAt DateTime?
+  lastError     String?
+  sortOrder     Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  instances   Instance[]
+  ipAddresses IpAddress[]
+  vpcs        Vpc[]
+  products    Product[]
+  proxySites  ProxySite[]
+}
+
+/// 智能分流出口类型：WireGuard（宿主机隧道，整机全协议）、SOCKS5 / HTTP（经 Agent 网关转发 TCP）
+enum EgressType {
+  WIREGUARD
+  SOCKS5
+  HTTP
+}
+
+/// 宿主机的智能分流出口：由宿主机 Agent 建立隧道或网关，同一宿主机上选择该出口的实例共享；
+/// 配置（私钥、密码等）加密保存，只下发给宿主机 Agent，不会下发到实例
+model NodeEgress {
+  id        Int        @id @default(autoincrement())
+  nodeId    Int
+  node      Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  name      String
+  type      EgressType
+  /// 加密的 JSON 配置：WireGuard 为私钥、地址、对端公钥、Endpoint 等；SOCKS5 / HTTP 为地址、端口与认证
+  configEnc String
+  enabled   Boolean    @default(true)
+  sortOrder Int        @default(0)
+  remark    String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  instances Instance[]
+
+  @@index([nodeId])
+}
+
+/// 实例进程审查的管理员自定义规则；规则只匹配进程名、命令行或协议关键字，不执行输入内容
+model InstanceAuditRule {
+  id        Int      @id @default(autoincrement())
+  ruleKey   String   @unique
+  name      String
+  category  String
+  risk      String
+  matches   Json
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model IpAddress {
+  id         Int       @id @default(autoincrement())
+  nodeId     Int
+  node       Node      @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  address    String    @unique
+  /// bridged 模式下的前缀长度，routed 模式固定 /32
+  prefix     Int       @default(32)
+  gateway    String?
+  instanceId Int?      @unique
+  instance   Instance? @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+  disabled   Boolean   @default(false)
+  remark     String?
+  createdAt  DateTime  @default(now())
+
+  @@index([nodeId])
+}
+
+// ───────────────────────────── 镜像 / 套餐 ─────────────────────────────
+
+model Image {
+  id           Int      @id @default(autoincrement())
+  name         String
+  /// 发行版标识，用于前端展示图标：debian / ubuntu / alpine / rocky / ...
+  family       String   @default("linux")
+  alias        String
+  server       String   @default("https://images.linuxcontainers.org")
+  protocol     String   @default("simplestreams")
+  forContainer Boolean  @default(true)
+  forVm        Boolean  @default(true)
+  /// 架构：x86_64 / aarch64；只用于分类，实际下载哪个架构由宿主机决定
+  arch         String   @default("x86_64")
+  /// 自定义 cloud-init user-data 模板，留空则使用内置模板
+  cloudInit    String?
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  instances Instance[]
+}
+
+enum InstanceType {
+  LXC_NAT
+  KVM_NAT
+  KVM_IPV4
+}
+
+enum TrafficMode {
+  OUT
+  IN
+  BOTH
+  MAX
+}
+
+enum OverLimitAction {
+  STOP
+  THROTTLE
+}
+
+/// 产品：套餐的上级分类，绑定可售宿主机；产品下的套餐都在这些宿主机上开通
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  /// 实例类型：产品下的所有套餐都使用此类型
+  type        InstanceType @default(LXC_NAT)
+  description String?
+  /// 标签（字符串数组），展示在购买页的产品卡片上
+  tags        Json?
+  /// 容器：特权容器（security.privileged）
+  privileged  Boolean  @default(false)
+  /// 容器：嵌套（security.nesting，容器内运行 Docker 等）
+  nesting     Boolean  @default(true)
+  /// 启动设置：{ autostart: ALWAYS|LAST_STATE|NEVER, delay, priority, stopPriority, shutdownTimeout }，为空使用默认值
+  boot        Json?
+  /// 各宿主机的设置：{ "<nodeId>": { storagePool?: string, trafficMultiplier?: number } }
+  nodeOptions Json?
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  nodes Node[]
+  plans Plan[]
+}
+
+model Plan {
+  id              Int             @id @default(autoincrement())
+  productId       Int
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  name            String
+  description     String?
+  type            InstanceType
+  cpu             Int
+  /// CPU 时间配额百分比：容器为 limits.cpu.allowance，虚拟机由宿主机上报程序限制 QEMU 进程；为空则不限制
+  cpuAllowance    Int?
+  /// CPU 调度优先级 0~10（容器 limits.cpu.priority，虚拟机由上报程序设置 CPU 权重），为空使用默认值
+  cpuPriority     Int?
+  /// 最大进程数（容器 limits.processes），为空则不限制
+  processLimit    Int?
+  /// MiB
+  memory          Int
+  /// SWAP 大小 MiB（仅容器，limits.memory.swap），0 表示不提供
+  swap            Int             @default(0)
+  /// GiB
+  disk            Int
+  /// 磁盘读写速率 MB/s 与 IOPS（根磁盘与数据盘的 limits.read / limits.write），0 表示不限
+  diskRead        Int             @default(0)
+  diskWrite       Int             @default(0)
+  diskReadIops    Int             @default(0)
+  diskWriteIops   Int             @default(0)
+  /// Mbps，入站（下载）
+  bandwidthIn     Int
+  /// Mbps，出站（上传）
+  bandwidthOut    Int
+  /// GiB / 周期，0 表示不限
+  traffic         Int             @default(0)
+  trafficMode     TrafficMode     @default(OUT)
+  overLimitAction OverLimitAction @default(THROTTLE)
+  /// 超额限速 Mbps
+  throttleRate    Int             @default(1)
+  /// 用户自助重置流量的价格（每次），为空表示不开放自助重置
+  trafficResetPrice Decimal?      @db.Decimal(10, 2)
+  portLimit       Int             @default(10)
+  siteLimit       Int             @default(0)
+  snapshotLimit   Int             @default(1)
+  /// 分配的公网 IPv6 数量，0 表示不分配（需宿主机为 IPv6 模式）
+  ipv6Count       Int             @default(0)
+  /// 指定存储池名称（各节点需存在同名存储池），为空则使用节点默认存储池
+  storagePool     String?
+  priceMonthly    Decimal?        @db.Decimal(10, 2)
+  priceQuarterly  Decimal?        @db.Decimal(10, 2)
+  priceSemiannual Decimal?        @db.Decimal(10, 2)
+  priceAnnual     Decimal?        @db.Decimal(10, 2)
+  /// 最大有效实例数，为空表示不限
+  stock           Int?
+  enabled         Boolean         @default(true)
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  instances Instance[]
+  orders    Order[]
+  invoices  Invoice[]
+
+  @@index([productId])
+}
+
+// ───────────────────────────── 实例 ─────────────────────────────
+
+enum InstanceStatus {
+  CREATING
+  RUNNING
+  STOPPED
+  REINSTALLING
+  /// 正在迁移到其他宿主机
+  MIGRATING
+  SUSPENDED
+  ERROR
+  DELETING
+  DELETED
+}
+
+enum SuspendReason {
+  EXPIRED
+  TRAFFIC
+  ADMIN
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  SEMIANNUAL
+  ANNUAL
+}
+
+model Instance {
+  id            Int            @id @default(autoincrement())
+  /// Incus 中的实例名
+  name          String         @unique
+  hostname      String
+  userId        Int
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  planId        Int?
+  plan          Plan?          @relation(fields: [planId], references: [id], onDelete: SetNull)
+  nodeId        Int
+  node          Node           @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  imageId       Int?
+  image         Image?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  type          InstanceType
+  status        InstanceStatus @default(CREATING)
+  suspendReason SuspendReason?
+  /// 管理员封禁时填写的原因（用户可见），解封时清空
+  suspendNote   String?
+
+  // 规格快照（购买时从套餐复制，后续修改套餐不影响已售实例）
+  cpu             Int
+  cpuAllowance    Int?
+  cpuPriority     Int?
+  processLimit    Int?
+  memory          Int
+  /// SWAP 大小 MiB（仅容器），0 表示不提供；swapEnabled 为用户是否启用（默认关闭，重装 / 重建后保持）
+  swap            Int            @default(0)
+  swapEnabled     Boolean        @default(false)
+  /// 智能分流出口（为空走宿主机默认线路）；只对 NAT 实例生效，迁移 / 切换机房时清除
+  egressId        Int?
+  egress          NodeEgress?    @relation(fields: [egressId], references: [id], onDelete: SetNull)
+  disk            Int
+  diskRead        Int            @default(0)
+  diskWrite       Int            @default(0)
+  diskReadIops    Int            @default(0)
+  diskWriteIops   Int            @default(0)
+  bandwidthIn     Int
+  bandwidthOut    Int
+  traffic         Int
+  trafficMode     TrafficMode
+  overLimitAction OverLimitAction
+  throttleRate    Int
+  /// 自助重置流量的价格（购买时从套餐复制），为空表示不开放
+  trafficResetPrice Decimal?    @db.Decimal(10, 2)
+  portLimit       Int
+  siteLimit       Int
+  snapshotLimit   Int
+  storagePool     String?
+  /// 容器：特权容器（security.privileged）
+  privileged      Boolean        @default(false)
+  /// 容器：嵌套（security.nesting）
+  nesting         Boolean        @default(true)
+  /// 启动设置（购买时从产品复制，修改产品时同步）：{ autostart, delay, priority, stopPriority, shutdownTimeout }
+  boot            Json?
+
+  // 网络
+  privateIp  String?
+  ipAddress  IpAddress?
+  ipv6       String?
+  /// 从宿主机 IPv6 子网分配的公网 IPv6，多个地址以逗号分隔（ipv6 为实际检测到的地址）
+  publicIpv6 String?
+  macAddress String?
+  sshPort    Int?
+
+  /// AES-GCM 加密后的 root 密码
+  rootPassword String?
+
+  // 流量统计（当前周期，字节）
+  trafficIn        BigInt   @default(0)
+  trafficOut       BigInt   @default(0)
+  trafficThrottled Boolean  @default(false)
+  lastRxCounter    BigInt   @default(0)
+  lastTxCounter    BigInt   @default(0)
+  trafficAnchorDay Int
+  trafficResetAt   DateTime
+
+  // 计费
+  billingCycle BillingCycle
+  price        Decimal      @db.Decimal(10, 2)
+  expiresAt    DateTime
+  autoRenew    Boolean      @default(false)
+  /// 循环抵扣的优惠码：之后每次续费（含自动续费）都按它减免
+  /// 加入的 VPC 与在其中的内网地址
+  vpcId        Int?
+  vpc          Vpc?         @relation(fields: [vpcId], references: [id], onDelete: SetNull)
+  vpcIp        String?
+  couponId     Int?
+  coupon       Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  remark          String?
+  lastError       String?
+  /// 首次创建成功的时间；为空表示从未成功开通（删除时可全额退款）
+  provisionedAt   DateTime?
+  lastReinstallAt DateTime?
+  /// 切换机房：上次免费切换成功的时间（每 30 天免费一次）与上次切换成功的时间（冷却 2 小时）
+  freeSwitchAt    DateTime?
+  nodeSwitchedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  portMappings PortMapping[]
+  sites        SiteBinding[]
+  snapshots    Snapshot[]
+  volumes      Volume[]
+  tasks        Task[]
+  orders       Order[]
+  invoices     Invoice[]
+  trafficDaily TrafficDaily[]
+  transfers    InstanceTransfer[]
+  marketListings MarketListing[]
+
+  @@unique([nodeId, privateIp])
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+enum PortProtocol {
+  TCP
+  UDP
+  TCP_UDP
+}
+
+model PortMapping {
+  id          Int          @id @default(autoincrement())
+  instanceId  Int
+  instance    Instance     @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  nodeId      Int
+  protocol    PortProtocol @default(TCP_UDP)
+  publicPort  Int
+  privatePort Int
+  description String?
+  /// 系统映射（SSH），不计入配额且不可删除
+  system      Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+
+  @@unique([nodeId, publicPort])
+  @@index([instanceId])
+}
+
+enum SiteStatus {
+  PENDING
+  ACTIVE
+  ERROR
+}
+
+model SiteBinding {
+  id         Int        @id @default(autoincrement())
+  instanceId Int
+  instance   Instance   @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  domain     String     @unique
+  targetPort Int        @default(80)
+  https      Boolean    @default(true)
+  status     SiteStatus @default(PENDING)
+  lastError  String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([instanceId])
+}
+
+enum TransferMode {
+  /// 原样交接（保留数据）
+  KEEP
+  /// 全新安装后交接
+  REINSTALL
+}
+
+/// 实例转移（过户）记录
+model InstanceTransfer {
+  id         Int          @id @default(autoincrement())
+  instanceId Int
+  instance   Instance     @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  /// 转移时的主机名
+  hostname   String
+  fromUserId Int
+  fromUser   User         @relation("TransferFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId   Int
+  toUser     User         @relation("TransferTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  mode       TransferMode
+  /// 由管理员发起
+  byAdmin    Boolean      @default(false)
+  /// 转出方填写的备注，会附在双方收到的通知里
+  remark     String?
+  /// 转出方支付的转移手续费
+  fee        Decimal      @default(0) @db.Decimal(10, 2)
+  /// 转移时的实例快照：配置、地区、系统、套餐与续费价格（之后实例变更不影响记录）
+  spec       Json?
+  createdAt  DateTime     @default(now())
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([instanceId])
+}
+
+/// 管理员在宿主机 Caddy 上配置的反向代理站点
+model ProxySite {
+  id        Int        @id @default(autoincrement())
+  nodeId    Int
+  node      Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  domain    String     @unique
+  /// 上游地址：10.0.0.5:8080 / http://host:port / https://host
+  upstream  String
+  https     Boolean    @default(true)
+  remark    String?
+  status    SiteStatus @default(PENDING)
+  lastError String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([nodeId])
+}
+
+model Snapshot {
+  id          Int      @id @default(autoincrement())
+  instanceId  Int
+  instance    Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@unique([instanceId, name])
+}
+
+/// 实例数据盘：存储盘用途存储池中的自定义卷，容器挂载到目录，虚拟机作为块设备接入
+model Volume {
+  id         Int      @id @default(autoincrement())
+  instanceId Int
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  pool       String
+  /// Incus 自定义卷名称
+  name       String
+  /// 容量（GiB）
+  size       Int
+  /// 容器内的挂载目录；虚拟机为空
+  path       String?
+  createdAt  DateTime @default(now())
+
+  @@index([instanceId])
+}
+
+model TrafficDaily {
+  instanceId Int
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  date       DateTime @db.Date
+  rx         BigInt   @default(0)
+  tx         BigInt   @default(0)
+
+  @@id([instanceId, date])
+}
+
+// ───────────────────────────── 任务 ─────────────────────────────
+
+enum TaskType {
+  CREATE
+  START
+  STOP
+  RESTART
+  FORCE_STOP
+  REINSTALL
+  RESET_PASSWORD
+  SNAPSHOT_CREATE
+  SNAPSHOT_RESTORE
+  SNAPSHOT_DELETE
+  SUSPEND
+  UNSUSPEND
+  APPLY_LIMITS
+  DELETE
+  /// 迁移到其他宿主机
+  MIGRATE
+  /// 按面板记录修正实例的配额与开机设置
+  SYNC_BASELINE
+  /// 重建网卡与端口映射并刷新实例内的网络
+  REPAIR_NETWORK
+  /// 重命名实例（过户后实例 ID 改为新所有者）
+  RENAME
+  /// 用户切换机房：在同产品的其他宿主机上重建
+  SWITCH_NODE
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model Task {
+  id         Int        @id @default(autoincrement())
+  instanceId Int?
+  instance   Instance?  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  userId     Int?
+  user       User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type       TaskType
+  status     TaskStatus @default(QUEUED)
+  payload    Json?
+  error      String?
+  createdAt  DateTime   @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([instanceId, createdAt])
+  @@index([status])
+}
+
+// ───────────────────────────── 计费 ─────────────────────────────
+
+enum OrderType {
+  NEW
+  RENEW
+}
+
+enum OrderStatus {
+  PAID
+  REFUNDED
+}
+
+enum InvoiceType {
+  PURCHASE
+  RENEW
+  TRAFFIC_RESET
+}
+
+enum InvoiceStatus {
+  PENDING
+  PROCESSING
+  PAID
+  CANCELED
+  EXPIRED
+}
+
+/// 待支付消费账单。账单创建不会改变余额或资源，只有支付时才执行对应消费动作。
+model Invoice {
+  id          Int           @id @default(autoincrement())
+  no          String        @unique
+  userId      Int
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        InvoiceType
+  status      InvoiceStatus @default(PENDING)
+  amount      Decimal       @db.Decimal(10, 2)
+  discount    Decimal       @default(0) @db.Decimal(10, 2)
+  description String
+  payload     Json
+  instanceId  Int?
+  instance    Instance?     @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+  planId      Int?
+  plan        Plan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+  expiresAt   DateTime?
+  paidAt      DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([instanceId, status])
+}
+
+model Order {
+  id          Int          @id @default(autoincrement())
+  no          String       @unique
+  userId      Int
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instanceId  Int?
+  instance    Instance?    @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+  planId      Int?
+  plan        Plan?        @relation(fields: [planId], references: [id], onDelete: SetNull)
+  type        OrderType
+  cycle       BillingCycle
+  /// 实付金额（已扣除优惠）
+  amount      Decimal      @db.Decimal(10, 2)
+  /// 优惠码减免的金额，原价 = amount + discount
+  discount    Decimal      @default(0) @db.Decimal(10, 2)
+  couponCode  String?
+  couponId    Int?
+  coupon      Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  status      OrderStatus  @default(PAID)
+  description String?
+  createdAt   DateTime     @default(now())
+  couponUsage CouponUsage?
+  affLogs     AffLog[]
+
+  @@index([userId, createdAt])
+}
+
+enum BalanceLogType {
+  RECHARGE
+  REDEEM
+  PURCHASE
+  RENEW
+  REFUND
+  ADJUST
+  /// 推广佣金转入余额
+  AFF
+  /// 实例转移手续费
+  TRANSFER
+  /// 自助重置流量
+  TRAFFIC
+  /// 交易市场：买入支出与卖出收入
+  MARKET
+  /// 切换机房（额外切换的费用与失败退回）
+  SWITCH
+}
+
+model BalanceLog {
+  id           Int            @id @default(autoincrement())
+  userId       Int
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         BalanceLogType
+  /// 正数为入账，负数为扣款
+  amount       Decimal        @db.Decimal(12, 2)
+  balanceAfter Decimal        @db.Decimal(12, 2)
+  description  String?
+  createdAt    DateTime       @default(now())
+
+  @@index([userId, createdAt])
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+}
+
+/// 在线充值记录
+model Payment {
+  id         Int           @id @default(autoincrement())
+  no         String        @unique
+  userId     Int
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// stripe / heleket / epay
+  gateway    String
+  /// 支付方式：alipay / wxpay / qqpay / stripe / heleket
+  channel    String?
+  /// 所属支付渠道（系统设置 → 支付里的渠道 ID）；回调和查询按这个渠道的密钥验签
+  channelId  String?
+  /// 到账余额（站点货币）
+  amount     Decimal       @db.Decimal(12, 2)
+  /// 手续费：加在应付金额上，到账余额仍是 amount
+  fee        Decimal       @default(0) @db.Decimal(12, 2)
+  /// 实际支付金额（网关货币）
+  payAmount  Decimal       @db.Decimal(12, 2)
+  currency   String
+  status     PaymentStatus @default(PENDING)
+  /// 网关侧订单号 / 会话 ID
+  externalId String?
+  payUrl     String?
+  paidAt     DateTime?
+  raw        Json?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model RedeemCode {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique
+  amount    Decimal   @db.Decimal(10, 2)
+  /// 可兑换次数：每个账号只能兑换一次，可以被多少个账号兑换
+  maxUses   Int       @default(1)
+  usedCount Int       @default(0)
+  /// 最近一次兑换的账号与时间
+  usedById  Int?
+  usedBy    User?     @relation(fields: [usedById], references: [id], onDelete: SetNull)
+  usedAt    DateTime?
+  expiresAt DateTime?
+  remark    String?
+  createdAt DateTime  @default(now())
+
+  usages RedeemUsage[]
+}
+
+/// 兑换记录：同一个兑换码每个账号只能兑换一次
+model RedeemUsage {
+  id        Int        @id @default(autoincrement())
+  codeId    Int
+  code      RedeemCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([codeId, userId])
+  @@index([userId])
+}
+
+/// VPC 私有网络：宿主机上一个独立的二层网桥（宿主机侧不配地址、不路由），同一 VPC 内的实例通过额外的网卡互联
+model Vpc {
+  id        Int        @id @default(autoincrement())
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodeId    Int
+  node      Node       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  name      String
+  /// 内网网段（面板按它给实例分配地址）
+  cidr      String
+  /// 宿主机上的 Incus 网络名称
+  network   String     @unique
+  createdAt DateTime   @default(now())
+
+  instances Instance[]
+
+  @@index([userId])
+}
+
+/// 优惠码：新购 / 续费时抵扣订单金额
+model Coupon {
+  id          Int       @id @default(autoincrement())
+  /// 大写保存，用户输入不区分大小写
+  code        String    @unique
+  /// 名称，便于在后台辨认（如：新购九折）
+  name        String?
+  /// PERCENT：按百分比减免（value 为减免比例，20 表示减 20%）；AMOUNT：减免固定金额
+  type        String
+  value       Decimal   @db.Decimal(10, 2)
+  /// 适用订单：NEW 新购 / RENEW 续费 / ALL 都可以
+  scope       String    @default("NEW")
+  /// 适用的产品 ID（JSON 数组），为空表示全部产品
+  productIds  Json?
+  /// 适用的套餐 ID（JSON 数组），为空表示所选产品下的全部套餐
+  planIds     Json?
+  /// 适用的付款周期（JSON 数组），为空表示全部周期
+  cycles      Json?
+  /// 订单原价达到该金额才能使用
+  minAmount   Decimal?  @db.Decimal(10, 2)
+  /// 百分比优惠的最高减免金额
+  maxDiscount Decimal?  @db.Decimal(10, 2)
+  /// 总使用次数上限，为空表示不限
+  maxUses     Int?
+  /// 每个用户最多使用次数，为空表示不限
+  perUser     Int?      @default(1)
+  /// ONCE：只抵扣这一笔订单；RECURRING：新购时锁定优惠价，之后续费（含自动续费）都按优惠价
+  mode        String    @default("ONCE")
+  /// 只允许没有任何已支付订单的账号使用
+  newUserOnly Boolean   @default(false)
+  usedCount   Int       @default(0)
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  enabled     Boolean   @default(true)
+  remark      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  usages    CouponUsage[]
+  orders    Order[]
+  instances Instance[]
+}
+
+/// 优惠码使用记录：一个订单最多使用一个优惠码；订单退款时删除记录并归还次数
+model CouponUsage {
+  id        Int      @id @default(autoincrement())
+  couponId  Int
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId   Int      @unique
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// 订单原价与减免金额
+  amount    Decimal  @db.Decimal(10, 2)
+  discount  Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+
+  @@index([couponId, createdAt])
+  @@index([userId, couponId])
+}
+
+// ───────────────────────────── 系统 ─────────────────────────────
+
+/// 站内信：管理员发给用户的通知（如批量通知实例所有者）
+model Message {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model Announcement {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String
+  pinned    Boolean  @default(false)
+  published Boolean  @default(true)
+  level     String   @default("INFO")
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reads     AnnouncementRead[]
+}
+
+/// 用户已读的公告（点击后才记录；注册之前发布的公告视为已读）
+model AnnouncementRead {
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  announcementId Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@id([userId, announcementId])
+  @@index([announcementId])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model ActivityLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+// ───────── 第三方登录 ─────────
+
+/// 绑定的第三方账号；提供商的配置在系统设置（Setting.oauth）里
+model OAuthAccount {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 提供商标识：github / google / 自定义提供商的标识
+  provider   String
+  /// 第三方平台上的用户 ID
+  providerId String
+  email      String?
+  name       String?
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@index([userId])
+}
+
+/// 通行密钥（WebAuthn 可发现凭据），可直接用于登录
+model Passkey {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 凭据 ID（base64url）
+  credentialId String    @unique
+  /// COSE 格式公钥（base64url）
+  publicKey    String
+  /// 签名计数器，用于发现被克隆的认证器
+  counter      BigInt    @default(0)
+  /// 认证器支持的传输方式（JSON 数组）
+  transports   String    @default("[]")
+  /// singleDevice：只在一台设备上；multiDevice：可跨设备同步
+  deviceType   String
+  backedUp     Boolean   @default(false)
+  name         String
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  @@index([userId])
+}
+
+// ───────── 实名认证 ─────────
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// 实名认证：支付宝「身份验证」刷脸核验，结果自动更新，不做人工审核
+model RealNameVerification {
+  id             Int                @id @default(autoincrement())
+  userId         Int                @unique
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 姓名、证件号加密保存；列表只显示脱敏值
+  realNameEnc    String
+  idNumberEnc    String
+  nameMasked     String
+  idNumberMasked String
+  /// 证件号摘要（HMAC），判断同一证件是否已被其他账号认证
+  idNumberHash   String
+  status         VerificationStatus @default(PENDING)
+  /// 支付宝认证编号（约 24 小时内有效）
+  certifyId      String?
+  /// 未通过 / 撤销的原因（用户可见）
+  reason         String?
+  submittedAt    DateTime           @default(now())
+  reviewedAt     DateTime?
+  /// 撤销认证的管理员
+  reviewerId     Int?
+
+  @@index([status])
+  @@index([idNumberHash])
+}
+
+// ───────── API 令牌 ─────────
+
+model ApiToken {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  /// 令牌开头几位，用于在列表中辨认
+  prefix     String
+  lastUsedAt DateTime?
+  lastUsedIp String?
+  expiresAt  DateTime?
+  /// 只读令牌：只能调用查询接口（GET），不能打开网页终端、查看实例密码
+  readOnly   Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// 推广佣金明细：EARN 被邀请用户付款后获得，REVOKE 订单退款后撤回，WITHDRAW 转入余额
+enum AffLogType {
+  EARN
+  REVOKE
+  WITHDRAW
+}
+
+/// 返佣的状态：冻结期内待生效，到期后计入可用佣金；冻结期内退款则作废
+enum AffLogStatus {
+  PENDING
+  SETTLED
+  CANCELED
+}
+
+model AffLog {
+  id           Int        @id @default(autoincrement())
+  userId       Int
+  user         User       @relation("AffOwner", fields: [userId], references: [id], onDelete: Cascade)
+  type         AffLogType
+  /// 正数为获得，负数为撤回或转出
+  amount       Decimal    @db.Decimal(12, 2)
+  balanceAfter Decimal    @db.Decimal(12, 2)
+  inviteeId    Int?
+  invitee      User?      @relation("AffInvitee", fields: [inviteeId], references: [id], onDelete: SetNull)
+  /// 产生佣金的订单（撤回时按它查找）
+  orderId      Int?
+  order        Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  /// 订单实付金额与当时的佣金比例
+  orderAmount  Decimal?   @db.Decimal(10, 2)
+  rate         Decimal?   @db.Decimal(5, 2)
+  /// 返佣（EARN）的状态与生效时间：待生效时为预计生效时间，已生效时为实际生效时间
+  status       AffLogStatus @default(SETTLED)
+  effectiveAt  DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@index([status, effectiveAt])
+}
+
+/// 账号保存的 SSH 公钥：购买、重装实例时可直接选用（只保存公钥，私钥由用户自己保管）
+model SshKey {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  /// 完整的一行公钥（类型 + Base64 + 注释）
+  publicKey   String
+  /// ssh-ed25519 / ssh-rsa 等
+  type        String
+  /// SHA256 指纹（与 ssh-keygen -lf 一致）
+  fingerprint String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, fingerprint])
+}
+
+// ───────────────────────────── 交易市场 ─────────────────────────────
+
+enum MarketListingStatus {
+  /// 挂牌中
+  ACTIVE
+  /// 已成交
+  SOLD
+  /// 卖家撤销
+  CANCELED
+  /// 被管理员下架，或实例已删除、已过户
+  REMOVED
+}
+
+/// 交易市场挂牌：卖家把自己的实例挂牌出售，买家用余额购买，成交后实例过户给买家
+model MarketListing {
+  id           Int                 @id @default(autoincrement())
+  instanceId   Int
+  instance     Instance            @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  sellerId     Int
+  seller       User                @relation("MarketSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  /// 挂牌时实例所属的套餐，用于统计同套餐的历史成交价
+  planId       Int?
+  /// 挂牌价（买家支付的金额）
+  price        Decimal             @db.Decimal(10, 2)
+  /// 成交后的交接方式：原样交接 / 全新安装后交接
+  mode         TransferMode        @default(KEEP)
+  /// 定向出售给指定用户；为空表示公开挂牌
+  targetUserId Int?
+  target       User?               @relation("MarketTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  remark       String?
+  status       MarketListingStatus @default(ACTIVE)
+  buyerId      Int?
+  buyer        User?               @relation("MarketBuyer", fields: [buyerId], references: [id], onDelete: SetNull)
+  /// 成交时平台收取的手续费（从卖家所得中扣除）
+  fee          Decimal             @default(0) @db.Decimal(10, 2)
+  soldAt       DateTime?
+  /// 成交时的实例信息快照（实例 ID 与名称、主机名、宿主机、IP、配置、到期时间、买卖双方与金额等）；
+  /// 成交后实例归买家并会变化，成交记录以快照为准
+  snapshot     Json?
+  /// 上架前拨测快照：上架时宿主机 Agent 从实例对外的 IPv4 向国内三网目标 Ping 一次的结果（状态、时间、方式、各目标延迟与丢包）
+  ping         Json?
+  /// 是否已在交易市场公开：上架后先拨测，拨测完成才公开（可以购买）；拨测未完成的商品只有卖家与管理员能看到
+  published    Boolean             @default(true)
+  /// 下架原因（管理员下架时填写）
+  endReason    String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([instanceId, status])
+  @@index([planId, status, soldAt])
+  @@index([sellerId, status])
+}

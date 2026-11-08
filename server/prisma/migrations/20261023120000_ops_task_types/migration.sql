@@ -1,0 +1,3 @@
+-- 宿主机运维：基线同步、网络修复任务
+ALTER TYPE "TaskType" ADD VALUE 'SYNC_BASELINE';
+ALTER TYPE "TaskType" ADD VALUE 'REPAIR_NETWORK';

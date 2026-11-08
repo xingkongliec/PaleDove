@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Image" ADD COLUMN "arch" TEXT NOT NULL DEFAULT 'x86_64';
