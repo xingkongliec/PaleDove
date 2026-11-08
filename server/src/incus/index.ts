@@ -18,6 +18,17 @@ export async function getIncus(node: NodeConn): Promise<IncusApi> {
   if (hit && hit.sig === sig) return hit.client;
   if (hit && hit.client instanceof HttpIncusClient) void hit.client.close().catch(() => undefined);
   const client = await createIncusClient(node, certificate);
+  if (!node.endpoint.startsWith('mock://')) {
+    const exec = client.exec.bind(client);
+    client.exec = async (name, command, opts) => {
+      try { return await exec(name, command, opts); }
+      catch (error) {
+        const { guestAgentUnavailable, execViaHost } = await import('../services/agent/guest-exec.ts');
+        if (!guestAgentUnavailable(error)) throw error;
+        return execViaHost(node.id, name, command, opts);
+      }
+    };
+  }
   clients.set(node.id, { sig, client });
   return client;
 }

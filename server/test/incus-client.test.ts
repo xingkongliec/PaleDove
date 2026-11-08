@@ -5,6 +5,7 @@ import forge from 'node-forge';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decodeTrustToken, HttpIncusClient } from '../src/incus/client.ts';
 import { IncusError } from '../src/incus/types.ts';
+import { WebSocketServer } from 'ws';
 
 /** 生成自签名证书（测试用） */
 function selfSigned(cn: string) {
@@ -41,6 +42,9 @@ describe('HttpIncusClient', () => {
   let etag = '"v1"';
   let httpd: Server;
   let endpoint = '';
+  let sockets: WebSocketServer;
+  const controlMessages: object[] = [];
+  const upgrades: string[] = [];
 
   const sync = (metadata: unknown, extra: Record<string, string> = {}) => ({
     status: 200,
@@ -79,6 +83,9 @@ describe('HttpIncusClient', () => {
           r = sync({ id: 'okop', status: 'Success', status_code: 200, err: '', metadata: {} });
         else if (route === 'GET /1.0/operations/failop/wait')
           r = sync({ id: 'failop', status: 'Failure', status_code: 400, err: 'The instance is already stopped', metadata: {} });
+        else if (route === 'POST /1.0/instances/c1/console') r = {
+          status: 202, headers: {}, body: { type: 'async', operation: '/1.0/operations/consoleop', metadata: { metadata: { fds: { '0': 'data-secret', control: 'control-secret' } } } },
+        };
         else if (route === 'POST /1.0/instances/c1/exec') r = asyncOp('execop');
         else if (route === 'GET /1.0/operations/execop/wait')
           r = sync({
@@ -100,11 +107,27 @@ describe('HttpIncusClient', () => {
         res.end(JSON.stringify(r.body));
       });
     });
+    sockets = new WebSocketServer({ noServer: true });
+    httpd.on('upgrade', (req, socket, head) => {
+      upgrades.push(req.url!);
+      sockets.handleUpgrade(req, socket, head, (ws) => {
+        if (req.url!.includes('control-secret')) ws.on('message', (value) => controlMessages.push(JSON.parse(value.toString())));
+        else {
+          // 立即发送，覆盖握手响应与首帧同时到达的场景。
+          ws.send(Buffer.from('RFB 003.008\n'));
+          ws.on('message', (value) => ws.send(value, { binary: true }));
+        }
+      });
+    });
     await new Promise<void>((resolve) => httpd.listen(0, '127.0.0.1', resolve));
     endpoint = `https://127.0.0.1:${(httpd.address() as AddressInfo).port}`;
   });
 
-  afterAll(() => new Promise<void>((resolve) => httpd.close(() => resolve())));
+  afterAll(() => {
+    for (const ws of sockets.clients) ws.terminate();
+    sockets.close();
+    return new Promise<void>((resolve) => httpd.close(() => resolve()));
+  });
 
   const make = (fingerprint: string | null = server.fingerprint) =>
     new HttpIncusClient({ endpoint, project: 'shop', cert: client.cert, key: client.key, fingerprint });
@@ -180,5 +203,23 @@ describe('HttpIncusClient', () => {
       expiresAt: '2030-01-01T00:00:00Z',
     });
     expect(() => decodeTrustToken('not-base64-json')).toThrow();
+  });
+
+  it('opens an agent-independent graphical console and preserves raw RFB bytes', async () => {
+    const c = make();
+    const output: Buffer[] = [];
+    const session = await c.openConsole('c1', 'vga', { cols: 120, rows: 32, onData: (value) => output.push(value), onExit: () => undefined });
+    session.write(Buffer.from([0, 1, 2, 255]));
+    for (let i = 0; i < 30 && output.length < 2; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(output[0].toString()).toBe('RFB 003.008\n');
+    expect([...output[1]]).toEqual([0, 1, 2, 255]);
+    const request = seen.filter((r) => r.url.startsWith('/1.0/instances/c1/console')).at(-1)!;
+    expect(request.url).toContain('project=shop');
+    expect(JSON.parse(request.body)).toEqual({ type: 'vga', width: 120, height: 32 });
+    expect(upgrades.slice(-2)).toEqual(['/1.0/operations/consoleop/websocket?secret=control-secret', '/1.0/operations/consoleop/websocket?secret=data-secret']);
+    session.close();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(controlMessages).not.toEqual(expect.arrayContaining([expect.objectContaining({ command: 'signal' })]));
+    await c.close();
   });
 });

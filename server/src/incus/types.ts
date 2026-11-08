@@ -233,6 +233,8 @@ export interface TerminalOptions {
 }
 
 export interface IncusApi {
+  /** 串口 / VGA 控制台不依赖虚拟机内的 incus-agent。 */
+  openConsole(name: string, type: 'console' | 'vga', opts: TerminalOptions): Promise<TerminalSession>;
   readonly endpoint: string;
   getServer(): Promise<IncusServer>;
   getResources(): Promise<IncusResources>;

@@ -9,6 +9,20 @@ install_paledove_agent() {
     aarch64|arm64) arch=arm64 ;;
     *) printf '[x] 不支持的架构 / unsupported architecture: %s\n' "$(uname -m)" >&2; return 1 ;;
   esac
+  # SSH 备用执行通道需要宿主机的 OpenSSH 客户端；其他 Agent 功能不依赖它。
+  if ! command -v ssh >/dev/null 2>&1; then
+    printf '安装 SSH 备用通道依赖 / installing the SSH client\n'
+    if command -v apt-get >/dev/null 2>&1; then
+      (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-client) || true
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y openssh-clients || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y openssh-clients || true
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache openssh-client || true
+    fi
+    command -v ssh >/dev/null 2>&1 || printf '[!] SSH 客户端未安装，虚拟机 SSH 备用通道不可用 / SSH fallback requires an SSH client\n' >&2
+  fi
   if ! manifest=$(curl -fsS --connect-timeout 10 --max-time 180 --retry 2 --retry-delay 2 "$panel/api/agent/manifest.json?format=text&version=1"); then
     printf '[x] 无法获取 Agent 发布清单，请检查面板的 Release 配置与网络 / failed to fetch agent manifest\n' >&2
     return 1

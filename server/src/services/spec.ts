@@ -88,7 +88,7 @@ type SpecInstance = Pick<
   | 'nesting'
   | 'boot'
   | 'status'
->;
+> & Partial<Pick<Instance, 'ipv6Prefixes'>>;
 
 /** 根据是否处于超额限速状态返回网卡限速值 */
 export function nicLimits(inst: Pick<Instance, 'bandwidthIn' | 'bandwidthOut' | 'throttleRate' | 'trafficThrottled'>) {
@@ -135,6 +135,7 @@ export function ipv6Mac(mac: string): string {
 export function buildIpv6Nic(inst: SpecInstance, node: Pick<Node, 'ipv6Parent'>): IncusDevice | null {
   if (!inst.publicIpv6) return null;
   const nic: IncusDevice = { type: 'nic', nictype: 'routed', 'ipv6.address': inst.publicIpv6 };
+  if (inst.ipv6Prefixes) nic['ipv6.routes'] = inst.ipv6Prefixes;
   if (node.ipv6Parent) nic.parent = node.ipv6Parent;
   if (!isVmType(inst.type)) nic.name = 'eth1';
   if (inst.macAddress) nic.hwaddr = ipv6Mac(inst.macAddress);
@@ -277,6 +278,7 @@ package_update: true
 packages:
   - {{ssh_package}}
 runcmd:
+  - [sh, -c, "if [ -c /dev/ttyS0 ]; then systemctl enable --now serial-getty@ttyS0.service 2>/dev/null || true; fi"]
   - [sh, -c, "mkdir -p /etc/ssh/sshd_config.d; printf 'PermitRootLogin yes\\\\nPasswordAuthentication yes\\\\n' > /etc/ssh/sshd_config.d/00-paledove.conf"]
   - [sh, -c, "sed -i -E 's/^#?PermitRootLogin.*/PermitRootLogin yes/; s/^#?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config"]
   - [sh, -c, "systemctl enable ssh 2>/dev/null; systemctl enable sshd 2>/dev/null; systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || (rc-update add sshd default; rc-service sshd restart) || true"]

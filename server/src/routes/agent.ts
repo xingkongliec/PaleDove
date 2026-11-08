@@ -16,6 +16,8 @@ import { AGENT_ARCHES, agentBinaryName, agentManifest, downloadAgentBinary, load
 import { agentReleaseVersion } from '../services/agent/agent-release.ts';
 import { unauthorized } from '../lib/errors.ts';
 import { nodeByInstallToken, nodeInstallScript, registerNode } from '../services/nodes.ts';
+import { saveHostTraffic, trafficTargets } from '../services/agent/host-traffic.ts';
+import { guestJobs, saveGuestResult } from '../services/agent/guest-exec.ts';
 
 /**
  * 宿主机安装脚本与宿主机 Agent 使用的接口（不依赖登录会话）：
@@ -194,10 +196,13 @@ export default async function agentRoutes(app: FastifyInstance) {
         arch: z.string().max(32).optional(),
         incus: z.object({ available: z.boolean(), socket: z.string().max(255).optional(), version: z.string().max(64).optional(), error: z.string().max(500).optional() }).optional(),
         capabilities: z.array(z.string().max(64)).max(32).optional(),
+        traffic: z.array(z.object({ name: z.string().max(63), interfaces: z.record(z.string().regex(/^eth[01]$/), z.object({ generation: z.string().min(1).max(160), rx: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), tx: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })).refine((v) => Object.keys(v).length <= 2) })).max(4096).optional(),
       }),
       req.body,
     );
-    await saveHostReport(node.id, body, req.ip);
+    const { traffic: samples, ...host } = body;
+    await saveHostReport(node.id, host, req.ip);
+    if (auth.secret && samples) await saveHostTraffic(node.id, samples, Number(req.headers['x-paledove-timestamp']));
     const latest = agentManifest().version;
     // 自动升级只发给签名认证的 Go 版 Agent（旧版 bash 上报程序需要重新安装）
     const upgrade = auth.secret ? upgradeInstruction(panelUrl(req), body.release, body.arch) : null;
@@ -213,6 +218,8 @@ export default async function agentRoutes(app: FastifyInstance) {
     return signedReply(reply, auth, {
       ok: true,
       interval: AGENT_REPORT_INTERVAL,
+      ...(auth.secret && body.capabilities?.includes('host-traffic') ? { traffic: await trafficTargets(node.id, node.project) } : {}),
+      ...(auth.secret && body.capabilities?.includes('guest-exec') ? { guestJobs: await guestJobs(node.id) } : {}),
       latest,
       ...(upgrade ? { upgrade } : {}),
       ...(ping ? { ping } : {}),
@@ -221,6 +228,13 @@ export default async function agentRoutes(app: FastifyInstance) {
       ...(listingPings.length ? { listingPings } : {}),
       ...(ipv4Checks.length ? { ipv4Checks } : {}),
     });
+  });
+
+  app.post('/api/agent/nodes/guest-result', async (req, reply) => {
+    const auth = await authenticate(req);
+    if (!auth.secret) throw unauthorized(t('agent.tokenInvalid'));
+    const body = parse(z.object({ requestId: z.uuid(), exitCode: z.number().int().min(-1).max(255), stdout: z.string().max(65536), stderr: z.string().max(65536), error: z.boolean().optional() }), req.body);
+    return signedReply(reply, auth, { ok: await saveGuestResult(auth.node.id, body.requestId, body) });
   });
 
   // 上报程序（2 版起）每 30 秒拉取一次虚拟机的 CPU 限制，纯文本便于 bash 解析

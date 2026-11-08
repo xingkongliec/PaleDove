@@ -1,7 +1,7 @@
 import type { InstanceStateDTO, MetricPoint, NodeUsageDTO, TrafficMode } from '../shared/index.ts';
 import { getIncus, type IncusInstanceState } from '../incus/index.ts';
 import { prisma, Prisma, type Instance, type Node } from '../lib/prisma.ts';
-import { redis } from '../lib/redis.ts';
+import { redis, withLock } from '../lib/redis.ts';
 import { dayjs, nodeTrafficPeriod, startOfDayUTC } from '../lib/time.ts';
 import { config } from '../config.ts';
 import { trafficUsedBytes } from './serializers.ts';
@@ -9,6 +9,7 @@ import { enqueueTask } from './tasks.ts';
 import { ipv6Mac } from './spec.ts';
 import { VPC_DEVICE, VPC_IFNAME } from './vpc.ts';
 import { agentInstanceSample, agentReportsInstances, clearAgentInstanceState, watchInstance } from './agent/instance-stats.ts';
+import { hostTrafficRates } from './agent/host-traffic.ts';
 
 const SERIES_KEY = (id: number) => `metrics:series:${id}`;
 const LAST_KEY = (id: number) => `metrics:last:${id}`;
@@ -67,14 +68,18 @@ export async function collectNode(node: Node): Promise<void> {
   const now = Date.now();
   const today = startOfDayUTC();
 
-  for (const inst of instances) {
+  for (const row of instances) await withLock(`traffic:${row.id}`, 10_000, async () => {
+    const inst = await prisma.instance.findUniqueOrThrow({ where: { id: row.id }, include: { tasks: { where: { status: { in: ['QUEUED', 'RUNNING'] } }, take: 1 } } });
+    if (inst.nodeId !== node.id) return;
     const r = byName.get(inst.name);
-    if (!r) continue;
+    if (!r) return;
     const state = r.state;
     const running = state?.status === 'Running';
     const { rx, tx } = sumCounters(state, inst);
-    const dRx = running ? delta(rx, inst.lastRxCounter) : 0n;
-    const dTx = running ? delta(tx, inst.lastTxCounter) : 0n;
+    const hostSource = (inst.trafficCounters as { source?: string } | null)?.source === 'host';
+    const host = hostSource ? await hostTrafficRates(inst.id) : null;
+    const dRx = running && !hostSource ? delta(rx, inst.lastRxCounter) : 0n;
+    const dTx = running && !hostSource ? delta(tx, inst.lastTxCounter) : 0n;
 
     // CPU 使用率：与上一次采样的 CPU 时间差 / 墙钟时间差 / 核数
     const lastRaw = await redis.get(LAST_KEY(inst.id));
@@ -89,6 +94,7 @@ export async function collectNode(node: Node): Promise<void> {
       rxRate = Number(dRx) / dtSec;
       txRate = Number(dTx) / dtSec;
     }
+    if (hostSource) { rxRate = host?.rxRate ?? 0; txRate = host?.txRate ?? 0; }
     await redis.set(LAST_KEY(inst.id), JSON.stringify({ t: now, cpu: cpuNs }), 'EX', 3600);
 
     if (running) {
@@ -126,7 +132,7 @@ export async function collectNode(node: Node): Promise<void> {
 
     const updated = await prisma.instance.update({ where: { id: inst.id }, data });
     await enforceTrafficLimit(updated);
-  }
+  });
 }
 
 /** 流量超额处理：限速或停机 */
@@ -158,7 +164,7 @@ export async function getMetricSeries(instanceId: number, minutes: number): Prom
  * 标记实例正在被查看，并优先使用 Agent 上报的状态（source = agent）；没有新鲜的上报时由面板直接查询 Incus。
  */
 export async function getLiveState(
-  inst: Pick<Instance, 'id' | 'name' | 'cpu' | 'memory' | 'disk' | 'trafficIn' | 'trafficOut' | 'trafficMode' | 'lastRxCounter' | 'lastTxCounter' | 'macAddress'> & { node: Node },
+  inst: Pick<Instance, 'id' | 'name' | 'cpu' | 'memory' | 'disk' | 'trafficIn' | 'trafficOut' | 'trafficMode' | 'lastRxCounter' | 'lastTxCounter' | 'macAddress'> & Partial<Pick<Instance, 'trafficCounters'>> & { node: Node },
 ): Promise<InstanceStateDTO> {
   const cacheKey = `state:cache:${inst.id}`;
   const cached = await redis.get(cacheKey);
@@ -210,8 +216,10 @@ export async function getLiveState(
   }
   // 本期流量：与每分钟统计的算法一致，加上还没统计进去的计数器增量
   const running = state.status === 'Running';
-  const trafficIn = inst.trafficIn + (running ? delta(rx, inst.lastRxCounter) : 0n);
-  const trafficOut = inst.trafficOut + (running ? delta(tx, inst.lastTxCounter) : 0n);
+  const hostSource = (inst.trafficCounters as { source?: string } | null)?.source === 'host';
+  const host = hostSource ? await hostTrafficRates(inst.id) : null;
+  const trafficIn = inst.trafficIn + (running && !hostSource ? delta(rx, inst.lastRxCounter) : 0n);
+  const trafficOut = inst.trafficOut + (running && !hostSource ? delta(tx, inst.lastTxCounter) : 0n);
   const dto: InstanceStateDTO = {
     status: state.status,
     cpuPercent: state.status === 'Running' ? cpuPercent : 0,
@@ -221,10 +229,10 @@ export async function getLiveState(
     diskUsage: rootDiskUsage(state),
     diskTotal: inst.disk * GiB,
     processes: Math.max(0, state.processes ?? 0),
-    netRx: rx,
-    netTx: tx,
-    netRxRate: state.status === 'Running' ? netRxRate : 0,
-    netTxRate: state.status === 'Running' ? netTxRate : 0,
+    netRx: hostSource ? host?.rx ?? 0 : rx,
+    netTx: hostSource ? host?.tx ?? 0 : tx,
+    netRxRate: state.status === 'Running' ? hostSource ? host?.rxRate ?? null : netRxRate : 0,
+    netTxRate: state.status === 'Running' ? hostSource ? host?.txRate ?? null : netTxRate : 0,
     trafficIn: Number(trafficIn),
     trafficOut: Number(trafficOut),
     trafficUsed: Number(trafficUsedBytes({ trafficIn, trafficOut, trafficMode: inst.trafficMode })),

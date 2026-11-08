@@ -451,6 +451,7 @@ export interface InstanceDTO {
   ipv6: string | null;
   /** 全部公网 IPv6 */
   ipv6List: string[];
+  ipv6Prefixes: string[];
   /** 宿主机为 IPv6 Only：没有公网 IPv4 与端口映射，通过 IPv6 直接访问 */
   ipv6Only: boolean;
   sshPort: number | null;
@@ -828,6 +829,7 @@ export interface NodeDTO {
   natListenAddressV6: string;
   ipv6Subnet: string;
   ipv6Parent: string;
+  ipv6PrefixLength: number;
   portRangeStart: number;
   portRangeEnd: number;
   publicNicMode: PublicNicMode;

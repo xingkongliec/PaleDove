@@ -25,6 +25,8 @@ idcpanel/
 | --- | --- |
 | `agent/cmd/paledove-agent/` | Go 宿主机 Agent 的程序入口 |
 | `agent/internal/` | 按功能拆分的 Agent 实现，组织约定见该应用的 README |
+| `agent/internal/traffic/`、`guestexec/` | 宿主机网卡流量采样与虚拟机 SSH 备用执行 |
+| `server/src/services/agent/host-traffic.ts`、`guest-exec.ts` | 流量基线持久化、加密 SSH 任务与结果校验 |
 | `agent/scripts/` | Agent 的双架构构建、校验清单与 Release 打包 |
 | `server/src/routes/` | Fastify API，管理员接口放在 `admin/` 下 |
 | `server/src/services/` | 开通、计费、支付、审查、宿主机安装、邮件等业务逻辑 |

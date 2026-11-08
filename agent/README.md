@@ -7,6 +7,8 @@
 - 按面板下发的升级指令自动升级。
 - 节点测试（宿主机设置中启用后）：每小时向内置的国内 31 个省份 × 三网共 93 个目标发送 ICMP Ping（每个目标 4 次，取平均延迟与丢包率；没有原始套接字权限时退回 TCP 连接测速），结果展示在购买页「节点测试」。
 - 实例资源上报（0.5.0 起，能力 `instance-stats`）：实例管理页面打开期间，每 3 秒通过本机 Incus 读取该实例的实时状态并上报，页面显示「Agent 上报」。
+- 宿主机侧实例流量（0.8.0 起，能力 `host-traffic`）：每次心跳读取受管实例 eth0 / eth1 对应 veth / tap 的网卡计数，无需打开实例页面，也不依赖虚拟机内的 incus-agent。
+- SSH 备用执行（0.8.0 起，能力 `guest-exec`）：Incus 无法联系虚拟机内 Agent 时，面板下发有期限的签名任务，由宿主机通过 SSH 执行；需要 OpenSSH 客户端、实例允许 root 密码登录且保存的密码有效。
 
 ## 生成策略：一次性安装令牌
 
@@ -91,6 +93,8 @@ agent/
     ├── upgrade/          自动升级
     ├── nodetest/         节点测试（ICMP / TCP Ping）
     ├── instances/        实例资源上报
+    ├── traffic/          宿主机 veth / tap 流量采样
+    ├── guestexec/        虚拟机 SSH 备用执行与结果重传
     └── egress/           智能分流（WireGuard 隧道、策略路由、SOCKS5 / HTTP 网关）
 ```
 
@@ -105,6 +109,8 @@ NAT 绑定宿主机公网地址（云厂商 1:1 NAT 使用默认出口），独�
 面板缓存完成结果 10 分钟，90 秒未回传则超时；重新检测会生成新任务编号。宿主机、IP 或独立 IPv4 的开关机状态变化后旧结果失效。发布面板时需同步构建或发布 0.7.2 及以上 Agent，旧版 Agent 会显示升级提示。
 
 ## 构建
+
+0.8.0 的新能力、网络接入条件和排障说明见 [实例访问与网络](../docs/INSTANCE_ACCESS.md)。Agent 自升级不会安装系统软件；现有宿主机若没有 `ssh`，需补装 OpenSSH 客户端或重跑 Agent 安装脚本。
 
 ```bash
 pnpm build:agent        # 在仓库根目录执行，输出 agent/dist/paledove-agent-linux-{amd64,arm64}、SHA256SUMS、VERSION

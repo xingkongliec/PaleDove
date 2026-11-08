@@ -316,7 +316,7 @@ const handlers: Record<Task['type'], (ctx: Ctx) => Promise<void>> = {
       else if (ctx.payload.refund !== false) await refundUnprovisioned(tx, inst);
       await tx.instance.update({
         where: { id: inst.id },
-        data: { status: 'DELETED', deletedAt: new Date(), privateIp: null, sshPort: null, rootPassword: null, vpcId: null, vpcIp: null },
+        data: { status: 'DELETED', deletedAt: new Date(), privateIp: null, publicIpv6: null, ipv6Prefixes: null, sshPort: null, rootPassword: null, vpcId: null, vpcIp: null },
       });
     });
     if (hadSites) await syncSitesSafe(inst.nodeId);

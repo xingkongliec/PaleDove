@@ -72,6 +72,15 @@ const mapping = (over: Partial<PortMapping> = {}): PortMapping =>
   ({ id: 3, protocol: 'TCP_UDP', publicPort: 25000, privatePort: 443, ...over }) as PortMapping;
 
 describe('proxy devices', () => {
+  it('routes an exclusive IPv6 prefix while configuring its primary address', () => {
+    const inst = instance({ publicIpv6: '2001:db8:0:1::1', ipv6Prefixes: '2001:db8:0:1::/64' });
+    expect(buildIpv6Nic(inst, node({ ipv6Parent: 'eth0' }))).toMatchObject({
+      'ipv6.address': '2001:db8:0:1::1', 'ipv6.routes': '2001:db8:0:1::/64', parent: 'eth0',
+    });
+    const network = renderIpv6NetworkConfig(inst.macAddress!, inst.publicIpv6!);
+    expect(network).toContain('2001:db8:0:1::1/128');
+    expect(network).toContain('fe80::1');
+  });
   it('creates tcp/udp NAT proxies', () => {
     expect(proxyDeviceNames(mapping({ protocol: 'TCP' }))).toEqual(['pm3-tcp']);
     expect(proxyDeviceNames(mapping())).toEqual(['pm3-tcp', 'pm3-udp']);

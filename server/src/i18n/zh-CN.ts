@@ -712,6 +712,11 @@ export const zhCN = {
   "mail.billingButton": "前往费用中心",
   "mail.businessOff": "可在「账号设置」中关闭此类邮件提醒。",
   "mail.noticeButton": "查看通知",
+  'terminal.vgaVmOnly': '图形控制台仅支持虚拟机',
+  'terminal.serialFallback': 'incus-agent 不可用，已切换至串口控制台，请使用系统账号登录。',
+  'node.ipv6PrefixInvalid': '实例 IPv6 前缀长度必须大于宿主机地址池前缀长度，请为宿主机和上游网关保留首个子网',
+  'guest.fallbackUnavailable': 'incus-agent 不可用，SSH 备用通道需要宿主机 Agent 0.8.0 或更新版本在线、实例 SSH 可达且已保存的 root 密码有效。也可通过控制台恢复。',
+  'guest.failed': 'SSH 备用通道执行失败，请检查实例 SSH 服务、root 密码和防火墙，或通过控制台恢复',
 } as const;
 
 export type ServerMessageKey = keyof typeof zhCN;

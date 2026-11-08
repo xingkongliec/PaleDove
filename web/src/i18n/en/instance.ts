@@ -483,4 +483,11 @@ export const instance: Record<keyof typeof zh, string> = {
   'overview.mode': 'Instance mode',
   'overview.sshCommand': 'SSH command',
   'overview.days': '{n} days',
+  'console.title': 'Console',
+  'overview.ipv6Prefix': 'Dedicated IPv6 prefix',
+  'console.serial': 'Serial console',
+  'console.serialDesc': 'System serial login, independent of incus-agent',
+  'console.vnc': 'VNC display',
+  'console.vncDesc': 'VM display and keyboard, including boot and recovery screens',
+  'console.hint': 'Consoles work without the guest incus-agent. Serial access requires a serial login service. The graphical console supports VMs only. Sign in with your system account.',
 };

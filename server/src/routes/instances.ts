@@ -227,7 +227,7 @@ export async function instanceDetailRoutes(app: FastifyInstance, { admin = false
       const { id } = (req.params ?? {}) as { id?: string };
       if (!id || !/^\d+$/.test(id)) return;
       const url = req.routeOptions.url ?? '';
-      const readOnly = (req.method === 'GET' || req.method === 'HEAD') && !url.endsWith('/terminal');
+      const readOnly = (req.method === 'GET' || req.method === 'HEAD') && !url.endsWith('/terminal') && !url.endsWith('/console');
       if (readOnly || url.endsWith('/:id/renew')) return;
       const body = req.body as Record<string, unknown> | null | undefined;
       if (req.method === 'PATCH' && url.endsWith('/:id') && body && typeof body === 'object' && Object.keys(body).every((k) => k === 'autoRenew')) return;
@@ -344,6 +344,20 @@ export async function instanceDetailRoutes(app: FastifyInstance, { admin = false
 
   // ───────── 网页终端 ─────────
 
+  app.get('/:id/console', { websocket: true }, (socket, req) => {
+    const vga = (req.query as { type?: string }).type === 'vga';
+    return serveTerminal(socket, req, async (opts) => {
+      const { id } = parse(idParam, req.params);
+      const { inst, user, isAdmin } = await loadInstance(req, id);
+      assertOperable(inst, isAdmin);
+      if (inst.status !== 'RUNNING') return t('terminal.notRunning');
+      if (vga && !isVmType(inst.type)) return t('terminal.vgaVmOnly');
+      const session = await (await getIncus(inst.node)).openConsole(inst.name, vga ? 'vga' : 'console', opts);
+      await logActivity(req, user.id, 'instance.console', `#${id} ${vga ? 'vga' : 'serial'}`);
+      return session;
+    }, vga);
+  });
+
   /** 浏览器 ⇄ WebSocket ⇄ Incus exec（root 交互式 shell），见 lib/terminal-socket.ts */
   app.get('/:id/terminal', { websocket: true }, (socket, req) =>
     serveTerminal(socket, req, async (opts) => {
@@ -351,7 +365,13 @@ export async function instanceDetailRoutes(app: FastifyInstance, { admin = false
       const { inst, user, isAdmin } = await loadInstance(req, id);
       assertOperable(inst, isAdmin);
       if (inst.status !== 'RUNNING') return t('terminal.notRunning');
-      const session = await (await getIncus(inst.node)).openTerminal(inst.name, opts);
+      const client = await getIncus(inst.node);
+      const session = await client.openTerminal(inst.name, opts).catch(async (error: unknown) => {
+        const { guestAgentUnavailable } = await import('../services/agent/guest-exec.ts');
+        if (!isVmType(inst.type) || !guestAgentUnavailable(error)) throw error;
+        opts.onData(Buffer.from(t('terminal.serialFallback') + '\r\n'));
+        return client.openConsole(inst.name, 'console', opts);
+      });
       await logActivity(req, user.id, 'instance.terminal', `#${id} ${inst.hostname}`);
       return session;
     }),

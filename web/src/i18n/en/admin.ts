@@ -1861,4 +1861,6 @@ export const admin: Record<keyof typeof zh, string> = {
   'adminSettings.marketFeeRateHint': 'Deducted from the seller\'s proceeds; buyers pay nothing extra. 0 means no fee, maximum 50%.',
   'adminSettings.marketMinDays': 'Minimum days left',
   'adminSettings.marketMinDaysHint': 'The same threshold applies when listing and buying. Set 0 for no extra minimum; a 5-minute transaction buffer is always kept.',
+  'nodeForm.ipv6Prefix': 'IPv6 prefix length per allocation',
+  'nodeForm.ipv6PrefixHint': '128 allocates an address; 64 etc. allocates a dedicated prefix. The plan quantity counts allocations. The first subnet is reserved. The upstream must route the pool to this host. Existing allocations stay unchanged.',
 };

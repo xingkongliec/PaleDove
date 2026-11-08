@@ -481,6 +481,11 @@ export class MockIncusClient implements IncusApi {
   }
 
   /** 模拟终端：回显输入，支持几个常用命令，便于在没有 Incus 的环境下调试网页终端 */
+  async openConsole(name: string, type: 'console' | 'vga', opts: TerminalOptions): Promise<TerminalSession> {
+    if (type === 'vga') throw new IncusError('Mock nodes do not provide a graphical display', 400);
+    return this.openTerminal(name, opts);
+  }
+
   async openTerminal(name: string, opts: TerminalOptions): Promise<TerminalSession> {
     const rec = await this.load(name);
     if (rec.instance.status !== 'Running') throw new IncusError('Instance is not running', 400);

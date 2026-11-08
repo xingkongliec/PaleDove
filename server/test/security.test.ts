@@ -70,6 +70,7 @@ describe('security hardening', () => {
     // 实例密码与网页终端虽然是 GET 也不允许
     expect((await request('GET', '/api/instances/1/credentials', { token })).statusCode).toBe(403);
     expect((await request('GET', '/api/instances/1/terminal', { token })).statusCode).toBe(403);
+    expect((await request('GET', '/api/instances/1/console', { token })).statusCode).toBe(403);
     // 账号安全接口对任何令牌都关闭
     expect((await request('GET', '/api/tokens', { token })).statusCode).toBe(403);
     expect((await request('GET', '/api/auth/me', { token })).statusCode).toBe(200);

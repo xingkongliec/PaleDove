@@ -16,12 +16,14 @@ import (
 	"github.com/paledove/agent/internal/buildinfo"
 	"github.com/paledove/agent/internal/config"
 	"github.com/paledove/agent/internal/egress"
+	"github.com/paledove/agent/internal/guestexec"
 	"github.com/paledove/agent/internal/hostinfo"
 	"github.com/paledove/agent/internal/incus"
 	"github.com/paledove/agent/internal/instances"
 	"github.com/paledove/agent/internal/logx"
 	"github.com/paledove/agent/internal/nodetest"
 	"github.com/paledove/agent/internal/panel"
+	"github.com/paledove/agent/internal/traffic"
 	"github.com/paledove/agent/internal/upgrade"
 	"github.com/paledove/agent/internal/vmlimits"
 )
@@ -52,6 +54,7 @@ type Report struct {
 	Arch         string              `json:"arch"`
 	Incus        incus.Info          `json:"incus"`
 	Capabilities []string            `json:"capabilities"`
+	Traffic      []traffic.Sample    `json:"traffic,omitempty"`
 }
 
 // reportResponse 为面板对上报的回复：上报间隔、最新版本，以及各模块的指令
@@ -69,6 +72,8 @@ type reportResponse struct {
 	// 上架拨测任务（用户把实例上架到交易市场时）
 	ListingPings []nodetest.ListingJob `json:"listingPings"`
 	IPv4Checks   []nodetest.IPv4Job    `json:"ipv4Checks"`
+	Traffic      *traffic.Targets      `json:"traffic"`
+	GuestJobs    []guestexec.Job       `json:"guestJobs"`
 }
 
 type Agent struct {
@@ -82,6 +87,8 @@ type Agent struct {
 	ipv4     *nodetest.IPv4Runner
 	inst     *instances.Reporter
 	egress   *egress.Manager
+	traffic  *traffic.Targets
+	guest    *guestexec.Runner
 }
 
 func New(cfg config.Config) *Agent {
@@ -98,6 +105,7 @@ func New(cfg config.Config) *Agent {
 		ipv4:     nodetest.NewIPv4Runner(),
 		inst:     instances.New(),
 		egress:   egress.New(),
+		guest:    guestexec.New(),
 	}
 }
 
@@ -124,6 +132,9 @@ func (a *Agent) Collect() Report {
 	if total, used, err := hostinfo.DiskStat("/"); err == nil {
 		r.Disk = &hostinfo.DiskUsage{Path: "/", Total: total, Used: used}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r.Traffic = traffic.Collect(ctx, a.incus, a.traffic)
 	return r
 }
 
@@ -155,6 +166,8 @@ func (a *Agent) report(ctx context.Context) (time.Duration, error) {
 	}
 	// 以下模块只接受签名有效的回复
 	if res.Verified {
+		a.traffic = r.Traffic
+		a.guest.MaybeRun(ctx, a.panel, r.GuestJobs)
 		// 节点测试：到期或要求立即测试时在后台进行
 		a.ping.MaybeRun(ctx, a.panel, r.Ping)
 		// 上架拨测：有任务时在后台进行

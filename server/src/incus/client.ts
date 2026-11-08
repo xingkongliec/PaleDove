@@ -450,11 +450,11 @@ export class HttpIncusClient implements IncusApi {
   // ───────── 网页终端 ─────────
 
   /** 连接操作的 WebSocket 通道；HTTPS 端点先完成 TLS 握手并校验证书指纹，再发送带密钥的升级请求 */
-  private async connectOperationSocket(operation: string, secret: string): Promise<WebSocket> {
+  private async connectOperationSocket(operation: string, secret: string, onData?: (data: Buffer) => void): Promise<WebSocket> {
     const path = `${operation}/websocket?secret=${encodeURIComponent(secret)}`;
     let ws: WebSocket;
     if (this.endpoint.startsWith('unix://')) {
-      ws = new WebSocket(`ws+unix://${this.endpoint.slice('unix://'.length)}:${path}`);
+      ws = new WebSocket(`ws+unix://${this.endpoint.slice('unix://'.length)}:${path}`, { handshakeTimeout: 10_000 });
     } else {
       const url = new URL(this.endpoint);
       const host = url.hostname.replace(/^\[|\]$/g, '');
@@ -474,20 +474,34 @@ export class HttpIncusClient implements IncusApi {
         s.once('timeout', () => s.destroy(new Error(t('incus.connectFailed'))));
         s.once('error', reject);
       });
-      ws = new WebSocket(`wss://${url.host}${path}`, { createConnection: () => socket });
+      ws = new WebSocket(`wss://${url.host}${path}`, { createConnection: () => socket, handshakeTimeout: 10_000 });
     }
+    // VNC 握手可能与 WebSocket 升级响应一起到达，必须在等待 open 前接收数据。
+    if (onData) ws.on('message', (msg: Buffer) => onData(Buffer.from(msg)));
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
       ws.once('error', reject);
-      ws.once('unexpected-response', (_req, res) => reject(new IncusError(t('incus.requestFailed', { status: res.statusCode ?? 0 }), res.statusCode ?? 502)));
+      ws.once('unexpected-response', (_req, res) => {
+        res.resume();
+        ws.terminate();
+        reject(new IncusError(t('incus.requestFailed', { status: res.statusCode ?? 0 }), res.statusCode ?? 502));
+      });
     });
     return ws;
   }
 
+  async openConsole(name: string, type: 'console' | 'vga', opts: TerminalOptions): Promise<TerminalSession> {
+    return this.openInteractive(name, opts, type);
+  }
+
   async openTerminal(name: string, opts: TerminalOptions): Promise<TerminalSession> {
-    const res = await this.raw('POST', this.withProject(`/1.0/instances/${encodeURIComponent(name)}/exec`), {
+    return this.openInteractive(name, opts);
+  }
+
+  private async openInteractive(name: string, opts: TerminalOptions, consoleType?: 'console' | 'vga'): Promise<TerminalSession> {
+    const res = await this.raw('POST', this.withProject(`/1.0/instances/${encodeURIComponent(name)}/${consoleType ? 'console' : 'exec'}`), {
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+      body: JSON.stringify(consoleType ? { type: consoleType, width: opts.cols, height: opts.rows } : {
         // 优先使用 bash 登录 shell，没有时退回 sh
         command: ['/bin/sh', '-c', 'cd /root 2>/dev/null; if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi'],
         environment: { TERM: 'xterm-256color', HOME: '/root', USER: 'root', LANG: 'C.UTF-8' },
@@ -511,7 +525,7 @@ export class HttpIncusClient implements IncusApi {
     const control = await this.connectOperationSocket(json.operation, fds.control);
     let data: WebSocket;
     try {
-      data = await this.connectOperationSocket(json.operation, fds['0']);
+      data = await this.connectOperationSocket(json.operation, fds['0'], opts.onData);
     } catch (e) {
       control.close();
       throw e;
@@ -524,9 +538,6 @@ export class HttpIncusClient implements IncusApi {
       data.close();
       opts.onExit(reason);
     };
-    data.on('message', (msg: Buffer, isBinary: boolean) => {
-      if (isBinary || msg.length) opts.onData(Buffer.from(msg));
-    });
     data.on('close', () => end());
     data.on('error', (e) => end(e.message));
     control.on('error', () => undefined);
@@ -536,7 +547,7 @@ export class HttpIncusClient implements IncusApi {
       resize: (cols, rows) => sendControl({ command: 'window-resize', args: { width: String(cols), height: String(rows) } }),
       close: () => {
         // 先发送 SIGHUP 让 shell 退出，再断开通道
-        sendControl({ command: 'signal', signal: 1 });
+        if (!consoleType) sendControl({ command: 'signal', signal: 1 });
         end();
       },
     };

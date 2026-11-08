@@ -141,3 +141,22 @@ export function allocateIpv6(cidr: string, used: Set<string>): string | null {
   }
   return null;
 }
+
+/** 分配不与已有地址 / 网段重叠的子网；按区间跳跃，避免遍历整个 IPv6 空间。 */
+export function allocateIpv6Prefix(cidr: string, prefix: number, used: string[]): string | null {
+  const pool = parseIpv6Cidr(cidr);
+  if (!Number.isInteger(prefix) || prefix < pool.prefix || prefix > 128) return null;
+  const size = 1n << BigInt(128 - prefix);
+  const end = pool.network + (1n << BigInt(128 - pool.prefix));
+  const ranges = used.map((v) => parseIpv6Cidr(v.includes('/') ? v : `${v}/128`))
+    .map((v) => ({ start: v.network, end: v.network + (1n << BigInt(128 - v.prefix)) }))
+    .filter((v) => v.end > pool.network && v.start < end)
+    .sort((a, b) => a.start < b.start ? -1 : a.start > b.start ? 1 : 0);
+  // 保留首个子网，避免占用宿主机和上游网关所在段。
+  let start = pool.network + (prefix === 128 ? 2n : size);
+  for (const range of ranges) {
+    if (start + size <= range.start) break;
+    if (start < range.end) start = pool.network + ((range.end - pool.network + size - 1n) / size) * size;
+  }
+  return start + size <= end ? `${bigIntToIpv6(start)}/${prefix}` : null;
+}

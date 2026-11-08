@@ -15,15 +15,30 @@ const IDLE_MS = 30 * 60_000;
  * 处理一个终端 WebSocket 连接。
  * open 负责权限与状态检查并打开 Incus 会话；返回字符串表示拒绝连接（作为提示显示给用户），抛出异常显示为「连接失败」
  */
-export async function serveTerminal(socket: WebSocket, req: FastifyRequest, open: (opts: TerminalOptions) => Promise<TerminalSession | string>): Promise<void> {
+export async function serveTerminal(socket: WebSocket, req: FastifyRequest, open: (opts: TerminalOptions) => Promise<TerminalSession | string>, binary = false): Promise<void> {
+  // Incus 连接和审计入库期间，浏览器可能已经回复 VNC 握手，先缓存再交给会话。
+  let consume: ((data: Buffer, isBinary: boolean) => void) | null = null;
+  const pending: { data: Buffer; isBinary: boolean }[] = [];
+  let pendingBytes = 0;
+  socket.on('message', (data: Buffer, isBinary: boolean) => {
+    if (consume) return consume(data, isBinary);
+    pendingBytes += data.length;
+    if (pendingBytes > 1024 * 1024 || pending.length >= 128) return socket.close(1009);
+    pending.push({ data, isBinary });
+  });
   const notice = (text: string, color = 31) => socket.readyState === socket.OPEN && socket.send(`\r\n\x1b[${color}m${text}\x1b[0m\r\n`);
   const fail = (text: string) => {
-    notice(text);
-    socket.close();
+    if (!binary) notice(text);
+    socket.close(1008, binary ? text.slice(0, 40) : undefined);
   };
   // WebSocket 不受同源策略限制：只接受本站页面发起的连接，防止其他网站借用户的登录状态打开终端
   const site = req.headers['sec-fetch-site'];
   if (site === 'cross-site' || site === 'same-site') return fail(t('terminal.forbiddenOrigin'));
+  if (req.headers.origin) {
+    try {
+      if (new URL(req.headers.origin).host !== req.headers.host) return fail(t('terminal.forbiddenOrigin'));
+    } catch { return fail(t('terminal.forbiddenOrigin')); }
+  } else if (binary) return fail(t('terminal.forbiddenOrigin'));
   let session: TerminalSession;
   try {
     const q = parse(z.object({ cols: z.coerce.number().int().min(10).max(500).default(120), rows: z.coerce.number().int().min(5).max(200).default(32) }), req.query);
@@ -32,7 +47,7 @@ export async function serveTerminal(socket: WebSocket, req: FastifyRequest, open
       rows: q.rows,
       onData: (data) => socket.readyState === socket.OPEN && socket.send(data),
       onExit: (reason) => {
-        notice(reason ? t('terminal.endedWith', { reason }) : t('terminal.ended'), 33);
+        if (!binary) notice(reason ? t('terminal.endedWith', { reason }) : t('terminal.ended'), 33);
         socket.close();
       },
     });
@@ -48,13 +63,19 @@ export async function serveTerminal(socket: WebSocket, req: FastifyRequest, open
   const touch = () => {
     clearTimeout(idle);
     idle = setTimeout(() => {
-      notice(t('terminal.idle'), 33);
+      if (!binary) notice(t('terminal.idle'), 33);
       s.close();
       socket.close();
     }, IDLE_MS);
   };
   touch();
-  socket.on('message', (raw: Buffer) => {
+  consume = (raw: Buffer, isBinary: boolean) => {
+    if (binary) {
+      if (!isBinary || raw.length > 1024 * 1024) return socket.close(1009);
+      s.write(raw);
+      touch();
+      return;
+    }
     try {
       const msg = JSON.parse(raw.toString()) as { type?: string; data?: unknown; cols?: unknown; rows?: unknown };
       if (msg.type === 'input' && typeof msg.data === 'string') {
@@ -68,7 +89,9 @@ export async function serveTerminal(socket: WebSocket, req: FastifyRequest, open
     } catch {
       // 忽略非法消息
     }
-  });
+  };
+  for (const msg of pending) consume(msg.data, msg.isBinary);
+  pending.length = 0;
   socket.on('close', () => {
     clearTimeout(idle);
     s.close();

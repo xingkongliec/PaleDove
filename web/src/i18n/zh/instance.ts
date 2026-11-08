@@ -482,4 +482,11 @@ export const instance = {
   'overview.mode': '实例模式',
   'overview.sshCommand': 'SSH 命令',
   'overview.days': '{n} 天',
+  'console.title': '控制台',
+  'overview.ipv6Prefix': 'IPv6 独立网段',
+  'console.serial': '串口控制台',
+  'console.serialDesc': '系统串口登录，不依赖 incus-agent',
+  'console.vnc': 'VNC 图形控制台',
+  'console.vncDesc': '虚拟机显示器与键盘，可查看启动和恢复界面',
+  'console.hint': '控制台不依赖虚拟机内的 incus-agent。串口需要系统启用串口登录；图形控制台仅支持虚拟机，使用系统账号登录。',
 } as const;

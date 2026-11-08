@@ -94,7 +94,7 @@ export const PROCESS_LIMIT_MIN = 64;
  */
 export const HOST_AGENT_VERSION = 3;
 /** 面板附带的 Agent 发布版本（构建 agent 时写入二进制），用于显示「最新 / 可更新」 */
-export const HOST_AGENT_RELEASE = '0.7.2';
+export const HOST_AGENT_RELEASE = '0.8.0';
 
 /** 比较 Agent 发布版本；开发版或非法版本返回 null，避免误判升级或降级。 */
 export function compareHostAgentReleases(a: string, b: string): number | null {

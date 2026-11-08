@@ -21,7 +21,7 @@ import {
   SquareTerminal,
   Waypoints,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { formatMoney } from '@/lib/format';
 import { useCurrency } from '@/lib/queries';
@@ -55,7 +55,8 @@ import Disks from './Disks';
 import Snapshots from './Snapshots';
 import Tasks from './Tasks';
 
-type Tab = 'overview' | 'monitor' | 'ports' | 'sites' | 'snapshots' | 'disks' | 'reinstall' | 'settings' | 'tasks' | 'admin';
+const Console = lazy(() => import('./Console'));
+type Tab = 'overview' | 'monitor' | 'console' | 'ports' | 'sites' | 'snapshots' | 'disks' | 'reinstall' | 'settings' | 'tasks' | 'admin';
 
 /** 重命名：修改主机名 */
 function RenameDialog({ inst, open, onClose }: { inst: AnyInstance; open: boolean; onClose: () => void }) {
@@ -441,6 +442,7 @@ function InstanceDetailPage({ admin }: { admin?: boolean }) {
           [
             { value: 'overview', label: t('detail.tab.overview'), icon: <Gauge /> },
             { value: 'monitor', label: t('detail.tab.monitor'), icon: <Activity /> },
+            { value: 'console', label: t('console.title'), icon: <SquareTerminal /> },
             { value: 'ports', label: t('detail.tab.ports'), icon: <Waypoints />, hidden: !nat || inst.ipv6Only },
             { value: 'sites', label: t('detail.tab.sites'), icon: <Link2 />, hidden: !nat || inst.ipv6Only },
             { value: 'snapshots', label: t('detail.tab.snapshots'), icon: <Camera /> },
@@ -477,6 +479,7 @@ function InstanceDetailPage({ admin }: { admin?: boolean }) {
         <ErrorBoundary>
           {tab === 'overview' && <Overview inst={inst} admin={admin} onRenew={() => setTab('settings')} />}
           {tab === 'monitor' && <Monitor inst={inst} />}
+          {tab === 'console' && <Suspense fallback={<PageLoading />}><Console inst={inst} /></Suspense>}
           {tab === 'ports' && nat && <Ports inst={inst} />}
           {tab === 'sites' && nat && <Sites inst={inst} />}
           {tab === 'snapshots' && <Snapshots inst={inst} />}

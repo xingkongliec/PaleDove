@@ -1,0 +1,3 @@
+ALTER TABLE "Node" ADD COLUMN "ipv6PrefixLength" INTEGER NOT NULL DEFAULT 128;
+ALTER TABLE "Instance" ADD COLUMN "ipv6Prefixes" TEXT;
+ALTER TABLE "Instance" ADD COLUMN "trafficCounters" JSONB;

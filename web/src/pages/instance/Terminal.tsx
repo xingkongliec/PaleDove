@@ -296,7 +296,7 @@ export function WebTerminal({
     status.current('connecting');
     term.write(`\x1b[90m${t('terminal.connecting')}\x1b[0m\r\n`);
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api${url}?cols=${term.cols}&rows=${term.rows}`);
+    const ws = new WebSocket(`${proto}://${location.host}/api${url}${url.includes('?') ? '&' : '?'}cols=${term.cols}&rows=${term.rows}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => status.current('connected');
     // 终端输出是二进制（原样交给 xterm 解码 UTF-8），提示信息是文本

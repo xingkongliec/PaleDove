@@ -137,7 +137,7 @@ export function routePath(req: FastifyRequest) {
 /** API 令牌不能访问的接口：登录与账号安全（密码、两步验证、会话、第三方登录）、令牌管理、实名认证 */
 const TOKEN_FORBIDDEN = /^\/api\/(auth|tokens|realname)(\/|$)/;
 /** 只读令牌额外禁止的查询接口：网页终端、实例 root 密码 */
-const TOKEN_READ_ONLY_BLOCKED = /^\/api\/instances\/:id\/(terminal|credentials)$/;
+const TOKEN_READ_ONLY_BLOCKED = /^\/api\/instances\/:id\/(terminal|console|credentials)$/;
 
 /** Authorization: Bearer pd_... 个人 API 令牌（只用于普通用户的控制台接口） */
 async function authenticateApiToken(req: FastifyRequest, raw: string) {

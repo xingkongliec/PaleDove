@@ -52,6 +52,10 @@ const optionalIpv6 = z
 
 const HOSTNAME = /^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
+function validateIpv6Allocation(node: { ipv6Subnet?: string; ipv6PrefixLength?: number }) {
+  if (node.ipv6Subnet && (node.ipv6PrefixLength ?? 128) <= parseIpv6Cidr(node.ipv6Subnet).prefix) throw badRequest(t('node.ipv6PrefixInvalid'));
+}
+
 /** 添加宿主机时填写的字段 */
 const hostFields = {
   name: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, m('v.nodeName')),
@@ -94,6 +98,7 @@ const hostFields = {
     .transform((v) => v || '')
     .refine((v) => v === '' || /^[A-Za-z0-9_.@-]{1,15}$/.test(v), m('v.ifaceName')),
   portRangeStart: z.number().int().min(1024).max(65535).default(20000),
+  ipv6PrefixLength: z.number().int().min(1).max(128).default(128),
   portRangeEnd: z.number().int().min(1024).max(65535).default(60000),
   publicNicMode: z.enum(PUBLIC_NIC_MODES).default('ROUTED'),
   publicNicParent: z.string().trim().optional().nullable().transform((v) => v || null),
@@ -238,6 +243,7 @@ export default async function adminNodeRoutes(app: FastifyInstance) {
   app.post('/api/admin/nodes', async (req) => {
     const admin = requireAdmin(req);
     const body = parse(z.object({ ...hostFields, ...advancedFields }), req.body);
+    validateIpv6Allocation(body);
     if (body.portRangeEnd <= body.portRangeStart) throw badRequest(t('node.badPortRange'));
     const { address, region, imageIds, ...data } = body;
     const node = await prisma.node.create({
@@ -277,6 +283,7 @@ export default async function adminNodeRoutes(app: FastifyInstance) {
     const { id } = parse(idParam, req.params);
     const body = parsePatch({ ...hostFields, ...advancedFields }, req.body);
     const existing = await loadNode(id);
+    validateIpv6Allocation({ ...existing, ...body });
     const start = body.portRangeStart ?? existing.portRangeStart;
     const end = body.portRangeEnd ?? existing.portRangeEnd;
     if (end <= start) throw badRequest(t('node.badPortRange'));

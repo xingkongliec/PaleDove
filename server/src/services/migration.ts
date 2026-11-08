@@ -2,10 +2,11 @@ import { DEFAULT_LOCALE, hasIpv6Mode, isNatType, isPublicIpv4Mode, normalizeLoca
 import { getIncus, IncusError, type IncusApi } from '../incus/index.ts';
 import type { IncusInstance, IncusInstanceCreate } from '../incus/types.ts';
 import { badRequest, conflict, errorMessage } from '../lib/errors.ts';
-import { prisma, type Instance, type IpAddress, type Node, type PortMapping, type Prisma } from '../lib/prisma.ts';
+import { prisma, Prisma, type Instance, type IpAddress, type Node, type PortMapping } from '../lib/prisma.ts';
 import { withLock } from '../lib/redis.ts';
 import { labels, runWithLocale, t } from '../i18n/index.ts';
-import { allocatePrivateIp, allocatePublicIpv6, allocatePublicPort, ensureNatNetwork, isPortInRange, usedPrivateIps, usedPublicIpv6 } from './allocation.ts';
+import { allocatePrivateIp, allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, isPortInRange, usedPrivateIps, usedPublicIpv6 } from './allocation.ts';
+import { parseIpv6Cidr, ipv6ToBigInt } from '../lib/ip.ts';
 import { syncSitesSafe } from './gateway.ts';
 import { detachInstance, VPC_DEVICE } from './vpc.ts';
 import { bumpEgressVersion } from './egress.ts';
@@ -19,6 +20,7 @@ interface Placement {
   nodeId: number;
   privateIp: string | null;
   publicIpv6: string | null;
+  ipv6Prefixes: string | null;
   ipId: number | null;
   /** 端口映射 id → 公网端口 */
   ports: Record<number, number>;
@@ -57,6 +59,7 @@ export function currentPlacement(inst: MigratingInstance): Placement {
     nodeId: inst.nodeId,
     privateIp: inst.privateIp,
     publicIpv6: inst.publicIpv6,
+    ipv6Prefixes: inst.ipv6Prefixes,
     ipId: inst.ipAddress?.id ?? null,
     ports: Object.fromEntries(inst.portMappings.map((m) => [m.id, m.publicPort])),
   };
@@ -87,10 +90,20 @@ async function doPlace(tx: Tx, inst: Instance, node: Node, prefer: Partial<Place
   }
 
   let publicIpv6: string | null = null;
+  let ipv6Prefixes: string | null = null;
   if (hasIpv6Mode(node.networkMode) && node.ipv6Subnet) {
-    const want = parseIpv6List(prefer.publicIpv6);
+    const want = parseIpv6List(prefer.publicIpv6 ?? inst.publicIpv6);
     const used = await usedPublicIpv6(tx, node);
-    publicIpv6 = want.length && want.every((a) => !used.has(a)) ? want.join(',') : await allocatePublicIpv6(tx, node, Math.max(1, want.length));
+    const prefixRows = await tx.instance.findMany({ where: { nodeId: node.id, id: { not: inst.id }, ipv6Prefixes: { not: null } }, select: { ipv6Prefixes: true } });
+    const pool = parseIpv6Cidr(node.ipv6Subnet);
+    const occupied = [...used].map((a) => parseIpv6Cidr(`${a}/128`)).concat(prefixRows.flatMap((r) => parseIpv6List(r.ipv6Prefixes).map(parseIpv6Cidr)));
+    const requested = parseIpv6List(prefer.ipv6Prefixes ?? inst.ipv6Prefixes);
+    const ranges = (requested.length ? requested : want.map((a) => `${a}/128`)).map(parseIpv6Cidr);
+    const fits = ranges.every((r) => r.prefix >= pool.prefix && r.network >= pool.network && r.network + (1n << BigInt(128 - r.prefix)) <= pool.network + (1n << BigInt(128 - pool.prefix)) && !occupied.some((o) => r.network < o.network + (1n << BigInt(128 - o.prefix)) && o.network < r.network + (1n << BigInt(128 - r.prefix))));
+    if (want.length && fits && (!requested.length || want.every((a) => ranges.some((r) => ipv6ToBigInt(a) >= r.network && ipv6ToBigInt(a) < r.network + (1n << BigInt(128 - r.prefix)))))) {
+      publicIpv6 = want.join(',');
+      ipv6Prefixes = requested.join(',') || null;
+    } else ({ publicIpv6, ipv6Prefixes } = await allocateIpv6Resources(tx, node, Math.max(1, want.length)));
   }
 
   let ipId: number | null = null;
@@ -117,8 +130,8 @@ async function doPlace(tx: Tx, inst: Instance, node: Node, prefer: Partial<Place
   }
 
   // 出口属于原宿主机：换到其他宿主机时清除
-  await tx.instance.update({ where: { id: inst.id }, data: { nodeId: node.id, privateIp, publicIpv6, sshPort, ...(node.id !== inst.nodeId ? { egressId: null } : {}) } });
-  return { nodeId: node.id, privateIp, publicIpv6, ipId, ports };
+  await tx.instance.update({ where: { id: inst.id }, data: { nodeId: node.id, privateIp, publicIpv6, ipv6Prefixes, sshPort, trafficCounters: Prisma.DbNull, lastRxCounter: 0n, lastTxCounter: 0n, ...(node.id !== inst.nodeId ? { egressId: null } : {}) } });
+  return { nodeId: node.id, privateIp, publicIpv6, ipv6Prefixes, ipId, ports };
 }
 
 async function loadInstance(id: number): Promise<MigratingInstance> {

@@ -23,10 +23,10 @@ AGENT_RELEASE_TOKEN=
 3. 构建成功后创建同名 Release，附带以下文件；已有同名 Release 时跳过，更新须使用新版本号。
 
 ```text
-tag: agent-v0.7.1
+tag: agent-v0.8.0
 assets:
-  paledove-agent-x86_64-v0.7.1
-  paledove-agent-aarch64-v0.7.1
+  paledove-agent-x86_64-v0.8.0
+  paledove-agent-aarch64-v0.8.0
   SHA256SUMS
   manifest.json
 ```

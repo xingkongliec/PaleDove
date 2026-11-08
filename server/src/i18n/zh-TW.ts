@@ -685,4 +685,9 @@ export const zhTW: Record<ServerMessageKey, string> = {
   "mail.billingButton": "前往費用中心",
   "mail.businessOff": "可在「帳號設定」中關閉此類郵件提醒。",
   "mail.noticeButton": "檢視通知",
+  "terminal.vgaVmOnly": "圖形控制台僅支援虛擬機器",
+  "terminal.serialFallback": "incus-agent 不可用，已切換至序列埠控制台，請使用系統帳號登入。",
+  "node.ipv6PrefixInvalid": "執行個體 IPv6 字首長度必須大於主機地址池字首長度，請為主機和上游閘道保留首個子網",
+  "guest.fallbackUnavailable": "incus-agent 不可用，SSH 備用通道需要主機 Agent 0.8.0 或更新版本線上、執行個體 SSH 可達且已儲存的 root 密碼有效。也可通過控制台恢復。",
+  "guest.failed": "SSH 備用通道執行失敗，請檢查執行個體 SSH 服務、root 密碼和防火牆，或通過控制台恢復",
 };

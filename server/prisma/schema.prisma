@@ -240,6 +240,8 @@ model Node {
   ipv6Subnet       String  @default("")
   /// IPv6 routed 网卡的宿主机父接口，例如 eth0
   ipv6Parent       String  @default("")
+  /// 每份 IPv6 的分配前缀，128 为单地址，64 等为独立路由网段
+  ipv6PrefixLength Int     @default(128)
   portRangeStart   Int     @default(20000)
   portRangeEnd     Int     @default(60000)
 
@@ -594,6 +596,8 @@ model Instance {
   ipv6       String?
   /// 从宿主机 IPv6 子网分配的公网 IPv6，多个地址以逗号分隔（ipv6 为实际检测到的地址）
   publicIpv6 String?
+  /// 实例独占的路由网段，多个以逗号分隔；主地址仍保存在 publicIpv6
+  ipv6Prefixes String?
   macAddress String?
   sshPort    Int?
 
@@ -606,6 +610,8 @@ model Instance {
   trafficThrottled Boolean  @default(false)
   lastRxCounter    BigInt   @default(0)
   lastTxCounter    BigInt   @default(0)
+  /// 流量计数来源与各宿主机网卡的计数基线，独立于周期用量重置
+  trafficCounters  Json?
   trafficAnchorDay Int
   trafficResetAt   DateTime
 

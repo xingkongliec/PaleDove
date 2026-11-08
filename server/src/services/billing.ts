@@ -21,7 +21,7 @@ import { withLock } from '../lib/redis.ts';
 import { getSettings } from '../lib/settings.ts';
 import { addCycle, dayjs, nextTrafficReset } from '../lib/time.ts';
 import { labels, t } from '../i18n/index.ts';
-import { allocatePrivateIp, allocatePublicIpv6, allocatePublicPort, ensureNatNetwork, nodeLoads } from './allocation.ts';
+import { allocatePrivateIp, allocateIpv6Resources, allocatePublicPort, ensureNatNetwork, nodeLoads } from './allocation.ts';
 import { createTaskRecord, dispatchTask, enqueueTask } from './tasks.ts';
 import { sendBusinessNotice } from './mail/business-mail.ts';
 import { consumeCoupon, quoteCoupon, recurringDiscount, releaseCoupon, renewalPrice } from './coupons.ts';
@@ -323,7 +323,7 @@ async function allocateInstance(tx: Tx, node: Node, spec: InstanceSpec, opts: { 
       nodeId: node.id,
       status: 'CREATING',
       privateIp: isNatType(spec.type) ? await allocatePrivateIp(tx, node) : null,
-      publicIpv6: opts.ipv6Count > 0 && hasIpv6Mode(node.networkMode) ? await allocatePublicIpv6(tx, node, opts.ipv6Count) : null,
+      ...(opts.ipv6Count > 0 && hasIpv6Mode(node.networkMode) ? await allocateIpv6Resources(tx, node, opts.ipv6Count) : {}),
       macAddress: randomMac(),
       rootPassword: encrypt(opts.password),
       trafficAnchorDay: anchorDay,

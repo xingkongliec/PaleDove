@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { getIncus } from '../incus/index.ts';
 import { badRequest, conflict } from '../lib/errors.ts';
-import { allocateFromCidr, allocateIpv6, parseCidr } from '../lib/ip.ts';
+import { allocateFromCidr, allocateIpv6Prefix, bigIntToIpv6, parseIpv6Cidr, parseCidr } from '../lib/ip.ts';
 import { parseIpv6List } from '../shared/index.ts';
 import { prisma, type Node, type Prisma } from '../lib/prisma.ts';
 import { t } from '../i18n/index.ts';
@@ -40,17 +40,23 @@ export async function usedPublicIpv6(db: Db, node: Pick<Node, 'id'>): Promise<Se
   return new Set(rows.flatMap((r) => parseIpv6List(r.publicIpv6)));
 }
 
-/** 从宿主机 IPv6 子网为实例分配 count 个公网 IPv6，返回逗号分隔的地址（调用方需持有节点分配锁） */
-export async function allocatePublicIpv6(db: Db, node: Node, count = 1): Promise<string> {
+/** 调用方持有节点分配锁；每份分配一个地址或一个独占网段及其主地址。 */
+export async function allocateIpv6Resources(db: Db, node: Node, count = 1): Promise<{ publicIpv6: string | null; ipv6Prefixes: string | null }> {
+  if (count <= 0) return { publicIpv6: null, ipv6Prefixes: null };
   const used = await usedPublicIpv6(db, node);
+  const rows = await db.instance.findMany({ where: { nodeId: node.id, ipv6Prefixes: { not: null } }, select: { ipv6Prefixes: true } });
+  const occupied = [...used, ...rows.flatMap((r) => parseIpv6List(r.ipv6Prefixes))];
   const out: string[] = [];
+  const prefixes: string[] = [];
   for (let i = 0; i < count; i++) {
-    const ip = allocateIpv6(node.ipv6Subnet, used);
-    if (!ip) throw conflict(t('node.ipv6Exhausted'));
-    used.add(ip);
-    out.push(ip);
+    const prefix = allocateIpv6Prefix(node.ipv6Subnet, node.ipv6PrefixLength ?? 128, occupied);
+    if (!prefix) throw conflict(t('node.ipv6Exhausted'));
+    occupied.push(prefix);
+    const range = parseIpv6Cidr(prefix);
+    out.push(bigIntToIpv6(range.network + (range.prefix < 128 ? 1n : 0n)));
+    if (range.prefix < 128) prefixes.push(prefix);
   }
-  return out.join(',');
+  return { publicIpv6: out.join(','), ipv6Prefixes: prefixes.join(',') || null };
 }
 
 export function isPortInRange(node: Pick<Node, 'portRangeStart' | 'portRangeEnd'>, port: number): boolean {

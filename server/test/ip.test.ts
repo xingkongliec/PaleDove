@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allocateFromCidr,
   allocateIpv6,
+  allocateIpv6Prefix,
   bigIntToIpv6,
   cidrContains,
   expandIpInput,
@@ -15,6 +16,14 @@ import {
 } from '../src/lib/ip.ts';
 
 describe('ip utils', () => {
+  it('allocates aligned IPv6 prefixes without overlapping existing addresses or prefixes', () => {
+    expect(allocateIpv6Prefix('2001:db8::/48', 64, [])).toBe('2001:db8:0:1::/64');
+    expect(allocateIpv6Prefix('2001:db8::/48', 64, ['2001:db8:0:1::50', '2001:db8:0:2::/63'])).toBe('2001:db8:0:4::/64');
+    expect(allocateIpv6Prefix('2001:db8::/126', 128, [])).toBe('2001:db8::2/128');
+    expect(allocateIpv6Prefix('2001:db8::/126', 128, ['2001:db8::2', '2001:db8::3'])).toBeNull();
+    expect(allocateIpv6Prefix('2001:db8::/64', 48, [])).toBeNull();
+    expect(allocateIpv6Prefix('2001:db8::/48', 64, ['2001:db8::/48'])).toBeNull();
+  });
   it('validates IPv4 addresses', () => {
     expect(isIPv4('203.0.113.5')).toBe(true);
     expect(isIPv4('0.0.0.0')).toBe(true);

@@ -24,6 +24,7 @@ export interface NodeFormValues {
   natListenAddressV6: string;
   ipv6Subnet: string;
   ipv6Parent: string;
+  ipv6PrefixLength: string;
   portRangeStart: string;
   portRangeEnd: string;
   publicNicMode: PublicNicMode;
@@ -69,6 +70,7 @@ export function nodeToForm(n?: NodeDTO): NodeFormValues {
     natListenAddressV6: n?.natListenAddressV6 ?? '',
     ipv6Subnet: n?.ipv6Subnet ?? '',
     ipv6Parent: n?.ipv6Parent ?? '',
+    ipv6PrefixLength: String(n?.ipv6PrefixLength ?? 128),
     portRangeStart: String(n?.portRangeStart ?? 20000),
     portRangeEnd: String(n?.portRangeEnd ?? 60000),
     publicNicMode: n?.publicNicMode ?? 'ROUTED',
@@ -111,6 +113,7 @@ export function hostPayload(v: NodeFormValues) {
     natListenAddressV6: v.natListenAddressV6,
     ipv6Subnet: v.ipv6Subnet,
     ipv6Parent: v.ipv6Parent,
+    ipv6PrefixLength: Number(v.ipv6PrefixLength),
     portRangeStart: Number(v.portRangeStart),
     portRangeEnd: Number(v.portRangeEnd),
     publicNicMode: v.publicNicMode,
@@ -339,6 +342,10 @@ export function NetworkFields({ value, onChange }: { value: NodeFormValues; onCh
             </FormField>
           </div>
           <p className="text-xs text-warning-text">{t('nodeForm.ipv6Later')}</p>
+          <FormField label={t('nodeForm.ipv6Prefix')}>
+            <Input type="number" min={1} max={128} value={value.ipv6PrefixLength} onChange={set('ipv6PrefixLength')} />
+          </FormField>
+          <p className="mt-2 text-xs text-fg-3">{t('nodeForm.ipv6PrefixHint')}</p>
         </Section>
       )}
     </>

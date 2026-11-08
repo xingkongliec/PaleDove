@@ -1860,4 +1860,6 @@ export const admin = {
   'adminSettings.marketFeeRateHint': '从卖家的成交款中扣除，买家不另付。0 表示不收取，最高 50%。',
   'adminSettings.marketMinDays': '最短剩余天数',
   'adminSettings.marketMinDaysHint': '挂牌和购买都会检查这个门槛；设置为 0 表示不额外限制，但仍保留 5 分钟交易缓冲。',
+  'nodeForm.ipv6Prefix': '每份 IPv6 前缀长度',
+  'nodeForm.ipv6PrefixHint': '128 分配单地址；64 等分配独立网段。套餐 IPv6 数量表示份数。首个子网保留，上游必须将整个地址池路由到宿主机；已有实例保持原分配。',
 } as const;

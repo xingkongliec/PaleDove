@@ -698,4 +698,9 @@ export const en: Record<ServerMessageKey, string> = {
   "mail.billingButton": "Open billing",
   "mail.businessOff": "You can turn these emails off in Account settings.",
   "mail.noticeButton": "View notifications",
+  'terminal.vgaVmOnly': 'The graphical console is available for virtual machines only',
+  'terminal.serialFallback': 'incus-agent is unavailable. Switched to the serial console; sign in with your system account.',
+  'node.ipv6PrefixInvalid': 'The instance IPv6 prefix length must exceed the host pool prefix length; the first subnet is reserved for the host and upstream gateway',
+  'guest.fallbackUnavailable': 'incus-agent is unavailable. SSH fallback requires an online host Agent 0.8.0 or newer, reachable guest SSH and a valid saved root password. You can also recover through the console.',
+  'guest.failed': 'SSH fallback failed. Check the guest SSH service, root password and firewall, or recover through the console',
 };

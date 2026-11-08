@@ -260,6 +260,7 @@ function BasicsCard({ inst }: { inst: AnyInstance }) {
         {inst.ipv6List.map((ip, i) => (
           <InfoRow key={ip} label={i ? `IPv6 #${i + 1}` : 'IPv6'} value={ip} copy />
         ))}
+        {inst.ipv6Prefixes?.map((prefix) => <InfoRow key={prefix} label={t('overview.ipv6Prefix')} value={prefix} copy />)}
         <InfoRow label={t('overview.rootPassword')}>
           <span className="font-mono">{password ?? '••••••••'}</span>
           <TextButton onClick={() => setReveal(!reveal)}>{reveal ? t('common.hide') : t('common.show')}</TextButton>
