@@ -33,7 +33,9 @@ import { activeProviders } from '../services/oauth.ts';
 import { hasPassword, toMe } from '../services/serializers.ts';
 import { listEnabledImages, listSalePlans, listSaleProducts } from './store.ts';
 import { productPing } from '../services/agent/ping.ts';
+import { getNightConfig } from '../services/night-market.ts';
 import { saleNodes } from '../services/billing.ts';
+import { publicPopups } from '../services/popups.ts';
 
 const passwordSchema = z.string().min(8, m('v.passwordMin')).max(128, m('v.passwordTooLong'));
 const countrySchema = z.string().regex(/^[A-Z]{2}$/, m('v.country'));
@@ -112,14 +114,14 @@ export default async function authRoutes(app: FastifyInstance) {
   app.get('/api/public/config', async (req): Promise<PublicConfigDTO> => {
     const { base, full } = await cached('settings', 'public-config', 300, async () => {
       const s = await getSettings();
-      const base: Omit<PublicConfigDTO, 'maintenance'> = { siteName: s.siteName, icon: siteIconUrl(await getSetting('siteIcon')), avatarApiBase: s.avatarApiBase, nodeSwitchFee: s.nodeSwitchFee, allowRegister: s.allowRegister, requireEmailVerification: s.requireEmailVerification,
+      const base: Omit<PublicConfigDTO, 'maintenance' | 'popups'> = { nightMarketEnabled: (await getNightConfig()).enabled, siteName: s.siteName, icon: siteIconUrl(await getSetting('siteIcon')), avatarApiBase: s.avatarApiBase, nodeSwitchFee: s.nodeSwitchFee, allowRegister: s.allowRegister, requireEmailVerification: s.requireEmailVerification,
         allowTickets: s.allowTickets, signupBonus: s.signupBonus, emailDomainMode: s.emailDomainMode, emailDomains: s.emailDomainMode === 'OFF' ? [] : s.emailDomains, mailEnabled: isMailConfigured(await getSetting('mail')),
         currency: s.currency, footer: s.footer, oauth: await activeProviders(), legalRequireAgree: (await getSetting('legal')).requireAgree, affEnabled: s.affEnabled, affRateNew: s.affRateNew, affRateRenew: s.affRateRenew, marketEnabled: s.marketEnabled, marketFeeRate: s.marketFeeRate, marketMinDays: s.marketMinDays };
       return { base, full: await getSetting('maintenance') };
     });
     const { allowEmails: _allowEmails, ...maintenance } = full;
     const state = maintenanceState(full);
-    return { ...base, maintenance: state === 'off' ? null : { ...maintenance, state, startedAt: maintenanceStartedAt(full), exempt: isMaintenanceExempt(full, req.user?.email) } };
+    return { ...base, popups: await publicPopups(), maintenance: state === 'off' ? null : { ...maintenance, state, startedAt: maintenanceStartedAt(full), exempt: isMaintenanceExempt(full, req.user?.email) } };
   });
 
   app.get('/api/site/icon', async (_req, reply) => {

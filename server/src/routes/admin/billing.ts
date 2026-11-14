@@ -2,6 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   BALANCE_LOG_TYPES,
+  INVOICE_STATUSES,
+  INVOICE_TYPES,
+  type AdminInvoiceDTO,
+  type AdminInvoicesDTO,
   type AdminBillingOverviewDTO,
   type AdminBillingRecordsDTO,
   type AdminOrdersDTO,
@@ -9,12 +13,14 @@ import {
   type BalanceLogType,
   type BillingRecordKind,
 } from '../../shared/index.ts';
-import { adminGuard, pageQuery, paging, parse } from '../../lib/http.ts';
+import { adminGuard, idParam, pageQuery, paging, parse } from '../../lib/http.ts';
+import { notFound } from '../../lib/errors.ts';
 import { containsInsensitive, isSqlite, prisma, Prisma } from '../../lib/prisma.ts';
 import { dayjs } from '../../lib/time.ts';
-import { money, orderInclude, toBalanceLogs, toOrder } from '../../services/serializers.ts';
+import { money, orderInclude, toBalanceLogs, toInvoice, toOrder } from '../../services/serializers.ts';
+import { invoiceDetailDto } from '../../services/invoices.ts';
 import { billingChange, billingPeriods } from '../../services/billing-report.ts';
-import { t } from '../../i18n/index.ts';
+import { m, t } from '../../i18n/index.ts';
 
 /** 市场买卖是用户间转账，不混入服务收入；切换机房失败退费也按实际流水抵减。 */
 const SERVICE_TYPES: BalanceLogType[] = ['PURCHASE', 'RENEW', 'REFUND', 'TRANSFER', 'TRAFFIC', 'SWITCH'];
@@ -30,7 +36,10 @@ async function sumLogs(db: Prisma.TransactionClient, types: BalanceLogType[], cr
 
 async function serviceSummary(db: Prisma.TransactionClient, createdAt: Range) {
   const [debits, credits] = await Promise.all([
-    db.balanceLog.groupBy({ by: ['type'], where: { type: { in: SERVICE_TYPES }, amount: { lt: 0 }, createdAt }, _sum: { amount: true }, _count: { _all: true } }),
+    // SQLite infers aggregate column types from the first group and can truncate later fractional sums.
+    isSqlite
+      ? Promise.all(SERVICE_TYPES.map(async type => ({ type, ...await db.balanceLog.aggregate({ where: { type, amount: { lt: 0 }, createdAt }, _sum: { amount: true }, _count: { _all: true } }) })))
+      : db.balanceLog.groupBy({ by: ['type'], where: { type: { in: SERVICE_TYPES }, amount: { lt: 0 }, createdAt }, _sum: { amount: true }, _count: { _all: true } }),
     db.balanceLog.aggregate({ where: { type: { in: SERVICE_TYPES }, amount: { gt: 0 }, createdAt }, _sum: { amount: true }, _count: { _all: true } }),
   ]);
   const gross = debits.reduce((sum, row) => sum.minus(row._sum.amount ?? 0), new Prisma.Decimal(0));
@@ -100,6 +109,8 @@ export default async function adminBillingRoutes(app: FastifyInstance) {
           autoRenew,
           expiringSoon,
           byPlan,
+          totalDiscount,
+          nightDiscount,
           couponDiscount,
           monthOrders,
         ] = await Promise.all([
@@ -128,7 +139,11 @@ export default async function adminBillingRoutes(app: FastifyInstance) {
           // 按产品统计：已支付的新购与续费订单
           tx.order.groupBy({ by: ['planId'], where: { status: 'PAID', createdAt: all }, _sum: { amount: true }, _count: { _all: true } }),
           tx.order.aggregate({ where: { status: 'PAID', discount: { gt: 0 }, createdAt: all }, _sum: { discount: true }, _count: { _all: true } }),
-          tx.order.groupBy({ by: ['type'], where: { status: 'PAID', createdAt: month }, _sum: { amount: true, discount: true }, _count: { _all: true } }),
+          tx.order.aggregate({ where: { status: 'PAID', discount: { gt: 0 }, discountSource: 'NIGHT_MARKET', createdAt: all }, _sum: { discount: true }, _count: { _all: true } }),
+          tx.order.aggregate({ where: { status: 'PAID', discount: { gt: 0 }, createdAt: all, OR: [{ discountSource: 'COUPON' }, { discountSource: null, couponCode: { not: null } }] }, _sum: { discount: true }, _count: { _all: true } }),
+          isSqlite
+            ? Promise.all((['NEW', 'RENEW'] as const).map(async type => ({ type, ...await tx.order.aggregate({ where: { status: 'PAID', type, createdAt: month }, _sum: { amount: true, discount: true }, _count: { _all: true } }) })))
+            : tx.order.groupBy({ by: ['type'], where: { status: 'PAID', createdAt: month }, _sum: { amount: true, discount: true }, _count: { _all: true } }),
         ]);
         const monthDiscounted = await tx.order.count({ where: { status: 'PAID', createdAt: month, discount: { gt: 0 } } });
 
@@ -182,6 +197,12 @@ export default async function adminBillingRoutes(app: FastifyInstance) {
           },
           adjust: money(adjust.amount),
           coupons: { amount: money(couponDiscount._sum.discount), count: couponDiscount._count._all },
+          discounts: {
+            total: { amount: money(totalDiscount._sum.discount), count: totalDiscount._count._all },
+            nightMarket: { amount: money(nightDiscount._sum.discount), count: nightDiscount._count._all },
+            coupon: { amount: money(couponDiscount._sum.discount), count: couponDiscount._count._all },
+            other: { amount: money((totalDiscount._sum.discount ?? new Prisma.Decimal(0)).minus(nightDiscount._sum.discount ?? 0).minus(couponDiscount._sum.discount ?? 0)), count: totalDiscount._count._all - nightDiscount._count._all - couponDiscount._count._all },
+          },
           balance: { total: money(balance._sum.balance), users: balance._count._all },
           incomeByType: { ...incomeTotal.byType, refund: money(incomeTotal.refund) },
           monthIncomeByType: incomeMonth.byType,
@@ -202,6 +223,63 @@ export default async function adminBillingRoutes(app: FastifyInstance) {
       },
       { isolationLevel: reportIsolation },
     );
+  });
+
+  const invoiceInclude = {
+    user: { select: { id: true, username: true, email: true } },
+    instance: { select: { hostname: true, type: true } },
+    plan: { select: { name: true, product: { select: { name: true } } } },
+  } satisfies Prisma.InvoiceInclude;
+
+  app.get('/api/admin/billing/invoices', async (req): Promise<AdminInvoicesDTO> => {
+    const q = parse(pageQuery.extend({
+      q: z.string().trim().max(100).optional(),
+      status: z.enum(INVOICE_STATUSES).optional(),
+      type: z.enum(INVOICE_TYPES).optional(),
+      startAt: z.iso.datetime({ offset: true }).optional(),
+      endAt: z.iso.datetime({ offset: true }).optional(),
+    }).refine(v => !v.startAt || !v.endAt || new Date(v.startAt) < new Date(v.endAt), { path: ['endAt'], message: m('invoice.invalidDateRange') }), req.query);
+    const where: Prisma.InvoiceWhereInput = {
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.type ? { type: q.type } : {}),
+      ...(q.q ? { OR: [
+        { no: containsInsensitive(q.q) },
+        { description: containsInsensitive(q.q) },
+        { user: { username: containsInsensitive(q.q) } },
+        { user: { email: containsInsensitive(q.q) } },
+        { plan: { name: containsInsensitive(q.q) } },
+        { plan: { product: { name: containsInsensitive(q.q) } } },
+        { instance: { hostname: containsInsensitive(q.q) } },
+      ] } : {}),
+      ...((q.startAt || q.endAt) ? { createdAt: { ...(q.startAt ? { gte: new Date(q.startAt) } : {}), ...(q.endAt ? { lt: new Date(q.endAt) } : {}) } } : {}),
+    };
+    return prisma.$transaction(async tx => {
+      const sumStatus = (status: 'PENDING' | 'PAID') => tx.invoice.aggregate({ where: { AND: [where, { status }] }, _sum: { amount: true }, _count: { _all: true } });
+      const sumDiscount = (discountSource?: string) => tx.invoice.aggregate({ where: { AND: [where, { status: 'PAID', discount: { gt: 0 }, ...(discountSource ? { discountSource } : {}) }] }, _sum: { discount: true } });
+      const [items, total, pending, paid, discounts, night, coupons] = await Promise.all([
+        tx.invoice.findMany({ where, include: invoiceInclude, orderBy: { id: 'desc' }, ...paging(q) }),
+        tx.invoice.count({ where }),
+        // 分别聚合，避免 SQLite 按首组推断类型而截断其他组的小数金额。
+        sumStatus('PENDING'), sumStatus('PAID'), sumDiscount(), sumDiscount('NIGHT_MARKET'), sumDiscount('COUPON'),
+      ]);
+      const totalDiscount = money(discounts._sum.discount);
+      const nightMarket = money(night._sum.discount);
+      const coupon = money(coupons._sum.discount);
+      return {
+        items: items.map(row => ({ ...toInvoice(row), user: row.user })),
+        total, page: q.page, pageSize: q.pageSize,
+        pending: { amount: money(pending._sum.amount), count: pending._count._all },
+        paid: { amount: money(paid._sum.amount), count: paid._count._all },
+        discounts: { total: totalDiscount, nightMarket, coupon, other: money(new Prisma.Decimal(totalDiscount).minus(nightMarket).minus(coupon)) },
+      };
+    }, { isolationLevel: reportIsolation });
+  });
+
+  app.get('/api/admin/billing/invoices/:id', async (req): Promise<AdminInvoiceDTO> => {
+    const { id } = parse(idParam, req.params);
+    const row = await prisma.invoice.findUnique({ where: { id }, include: invoiceInclude });
+    if (!row) throw notFound(t('invoice.notFound'));
+    return { ...await invoiceDetailDto(row), user: row.user };
   });
 
   app.get('/api/admin/billing/records', async (req): Promise<AdminBillingRecordsDTO> => {

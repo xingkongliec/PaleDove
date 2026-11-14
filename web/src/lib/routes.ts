@@ -8,6 +8,8 @@ export const loaders = {
   home: () => import('@/pages/Home'),
   dashboard: () => import('@/pages/console/Dashboard'),
   store: () => import('@/pages/console/Store'),
+  nightMarket: () => import('@/pages/console/NightMarket'),
+  adminNightMarket: () => import('@/pages/admin/NightMarketSettings'),
   instances: () => import('@/pages/console/Instances'),
   vpcs: () => import('@/pages/console/Vpcs'),
   instanceDetail: () => import('@/pages/instance/InstanceDetail'),
@@ -42,8 +44,11 @@ export const loaders = {
   adminInstanceCreate: () => import('@/pages/admin/instances/InstanceCreate'),
   adminImages: () => import('@/pages/admin/catalog/Images'),
   adminUsers: () => import('@/pages/admin/Users'),
+  adminUserCreate: () => import('@/pages/admin/users/UserCreate'),
+  adminUserDetail: () => import('@/pages/admin/users/UserDetail'),
   adminRealname: () => import('@/pages/admin/Realname'),
   adminBilling: () => import('@/pages/admin/billing/BillingAdmin'),
+  adminInvoiceDetail: () => import('@/pages/admin/billing/InvoiceDetail'),
   adminPromotions: () => import('@/pages/admin/billing/Promotions'),
   adminCouponEdit: () => import('@/pages/admin/billing/CouponEdit'),
   adminAnnouncements: () => import('@/pages/admin/Announcements'),
@@ -67,6 +72,8 @@ const ROUTES: Array<[RegExp, Loader[]]> = [
   [/^\/console\/?$/, [L.dashboard]],
   [/^\/console\/dashboard/, [L.dashboard]],
   [/^\/(console\/)?store/, [L.store]],
+  [/^\/console\/night-market/, [L.nightMarket]],
+  [/^\/admin\/night-market/, [L.adminNightMarket]],
   [/^\/console\/instances\/[^/]+/, [L.instanceDetail]],
   [/^\/console\/instances/, [L.instances]],
   [/^\/console\/vpc/, [L.vpcs]],
@@ -96,8 +103,11 @@ const ROUTES: Array<[RegExp, Loader[]]> = [
   [/^\/admin\/products\/.+/, [L.adminProductDetail]],
   [/^\/admin\/plans/, [L.adminPlans]],
   [/^\/admin\/images/, [L.adminImages]],
+  [/^\/admin\/users\/new/, [L.adminUserCreate]],
+  [/^\/admin\/users\/[^/]+/, [L.adminUserDetail]],
   [/^\/admin\/users/, [L.adminUsers]],
   [/^\/admin\/realname/, [L.adminRealname]],
+  [/^\/admin\/billing\/invoices\/[^/]+/, [L.adminInvoiceDetail]],
   [/^\/admin\/billing/, [L.adminBilling]],
   [/^\/admin\/promotions\/coupons\/.+/, [L.adminCouponEdit]],
   [/^\/admin\/promotions/, [L.adminPromotions]],
@@ -129,14 +139,21 @@ export function prefetchAll(admin: boolean) {
   const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
   if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') return () => {};
   const list = admin
-    ? [L.adminInstances, L.adminNodes, L.adminNodeDetail, L.adminPing, L.adminUsers, L.instanceDetail, L.adminSettings, L.adminPlans, L.adminBilling, L.adminPromotions, L.adminTasks, L.adminImages, L.adminAnnouncements, L.adminDocuments, L.adminRealname, L.account]
-    : [L.instances, L.instanceDetail, L.store, L.billing, L.invoices, L.vpcs, L.account, L.activity, L.dashboard, L.documents];
+    ? [L.adminInstances, L.adminNodes, L.adminUsers, L.adminTasks]
+    : [L.instances, L.market, L.marketMine, L.invoices];
   let cancelled = false;
   let i = 0;
-  const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
-  const idle = (cb: () => void) => (ric ? ric(cb, { timeout: 3000 }) : window.setTimeout(cb, 400));
+  let handle: number | undefined;
+  const idle = (cb: () => void) => {
+    if (window.requestIdleCallback) handle = window.requestIdleCallback(cb);
+    else handle = window.setTimeout(cb, 1200);
+  };
   const next = () => {
     if (cancelled || i >= list.length) return;
+    if (document.visibilityState === 'hidden' || (navigator as Navigator & { scheduling?: { isInputPending?: () => boolean } }).scheduling?.isInputPending?.()) {
+      idle(next);
+      return;
+    }
     const fn = list[i++]!;
     if (started.has(fn)) return next();
     started.add(fn);
@@ -148,5 +165,9 @@ export function prefetchAll(admin: boolean) {
   return () => {
     cancelled = true;
     window.clearTimeout(t);
+    if (handle !== undefined) {
+      if (window.cancelIdleCallback) window.cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    }
   };
 }

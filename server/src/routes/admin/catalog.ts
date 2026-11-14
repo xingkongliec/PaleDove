@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { BOOT_AUTOSTART_MODES, BOOT_LIMITS, bootOptions, CPU_PRIORITY_MAX, IMAGE_ARCHES, INSTANCE_TYPES, IPV6_COUNT_MAX, isNatType, isPublicIpv4Mode, isVmType, OVER_LIMIT_ACTIONS, PROCESS_LIMIT_MIN, TRAFFIC_MODES, TRAFFIC_MULTIPLIER_MAX, TRAFFIC_MULTIPLIER_MIN, type InstanceType, type ProductNodeOption } from '../../shared/index.ts';
+import { BOOT_AUTOSTART_MODES, BOOT_LIMITS, bootOptions, CPU_PRIORITY_MAX, IMAGE_ARCHES, INSTANCE_TYPES, IPV6_COUNT_MAX, isNatType, isPublicIpv4Mode, isVmType, OVER_LIMIT_ACTIONS, PLAN_STOCK_MAX, PROCESS_LIMIT_MIN, TRAFFIC_MODES, TRAFFIC_MULTIPLIER_MAX, TRAFFIC_MULTIPLIER_MIN, type InstanceType, type ProductNodeOption } from '../../shared/index.ts';
 import { badRequest, conflict } from '../../lib/errors.ts';
 import { adminGuard, ensureFound, idParam, logActivity, parse, parsePatch, requireAdmin } from '../../lib/http.ts';
 import { prisma, Prisma } from '../../lib/prisma.ts';
@@ -11,6 +11,7 @@ import { enqueueTask } from '../../services/tasks.ts';
 import { assertDiskLimits } from '../../services/spec.ts';
 import { invalidateCache } from '../../lib/cache.ts';
 import { OPS_STATUSES } from '../../services/node-ops.ts';
+import { changePlanStock } from '../../services/plan-stock.ts';
 
 const imageFields = {
   name: z.string().trim().min(1, m('v.nameRequired')).max(64),
@@ -125,10 +126,15 @@ const planFields = {
   priceQuarterly: price,
   priceSemiannual: price,
   priceAnnual: price,
-  stock: z.number().int().min(0).nullable().optional(),
+  stock: z.number().int().min(0).max(PLAN_STOCK_MAX).nullable().optional(),
   enabled: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
 };
+
+const stockChange = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('adjust'), delta: z.number().int().min(-PLAN_STOCK_MAX).max(PLAN_STOCK_MAX).refine(value => value !== 0, m('v.stockDelta')) }).strict(),
+  z.object({ operation: z.literal('set'), stock: z.number().int().min(0).max(PLAN_STOCK_MAX).nullable(), expectedStock: z.number().int().min(0).max(PLAN_STOCK_MAX).nullable() }).strict(),
+]);
 
 const productInclude = {
   nodes: { select: { id: true, name: true, region: true, enabled: true, country: true, networkMode: true }, orderBy: { id: 'asc' } },
@@ -306,6 +312,19 @@ export default async function adminCatalogRoutes(app: FastifyInstance) {
     const plan = await prisma.plan.update({ where: { id }, data: { ...data, type, ...typeLimits(type) } });
     await logActivity(req, admin.id, 'admin.plan_update', plan.name);
     return planWithCount(id);
+  });
+
+  app.post('/api/admin/plans/:id/stock', async (req) => {
+    const admin = requireAdmin(req);
+    const { id } = parse(idParam, req.params);
+    const change = parse(stockChange, req.body);
+    await changePlanStock(id, change);
+    const plan = await planWithCount(id);
+    const detail = change.operation === 'adjust'
+      ? t('log.planStockAdjust', { name: plan.name, delta: change.delta > 0 ? `+${change.delta}` : change.delta })
+      : t('log.planStockSet', { name: plan.name, stock: change.stock ?? '∞' });
+    await logActivity(req, admin.id, 'admin.plan_update', detail);
+    return plan;
   });
 
   app.delete('/api/admin/plans/:id', async (req) => {

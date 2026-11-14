@@ -12,6 +12,7 @@ import {
   productNodeOption,
   scaleTraffic,
   type BillingCycle,
+  type NightPrizeSnapshot,
 } from '../shared/index.ts';
 import { encrypt, generatePassword, randomId, randomMac } from '../lib/crypto.ts';
 import { AppError, badRequest, conflict, notFound, paymentRequired } from '../lib/errors.ts';
@@ -27,6 +28,7 @@ import { sendBusinessNotice } from './mail/business-mail.ts';
 import { consumeCoupon, quoteCoupon, recurringDiscount, releaseCoupon, renewalPrice } from './coupons.ts';
 import { awardCommission, revokeCommission } from './aff.ts';
 import { resolveNodeArchitectures } from './node-architecture.ts';
+import { lockNightMarket, normalizeNightPrize, requireNightOffer } from './night-market.ts';
 
 type Tx = Prisma.TransactionClient;
 
@@ -68,6 +70,7 @@ export async function changeBalance(
 export interface SaleNodeDTO {
   id: number;
   name: string;
+  status: Node['status'];
   /** 产品在这台宿主机上的流量倍率 */
   trafficMultiplier: number;
   /** 这台宿主机提供的镜像（按勾选与架构过滤）；null 为面板全部镜像 */
@@ -87,6 +90,7 @@ export async function saleNodes(productId: number, region: string): Promise<Sale
   return loads.map(({ node, active, freeIps }) => ({
     id: node.id,
     name: node.name,
+    status: node.status,
     // 购买页切换宿主机时只显示这台宿主机有的镜像（未勾选且架构未知时为全部）
     imageIds: nodeImageIds(node.imageIds) === null && !node.arch ? null : images.filter((i) => nodeAllowsImage(node, i)).map((i) => i.id),
     // 产品在这台宿主机上的流量倍率：购买页切换宿主机时按它显示流量
@@ -113,6 +117,7 @@ export interface PurchaseInput {
   password?: string;
   sshKeys?: string[];
   couponCode?: string;
+  nightMarketOfferId?: number;
   /** 购买页选择的宿主机（产品在该地区有多台时）；不传时自动选择负载最低的 */
   nodeId?: number;
 }
@@ -121,7 +126,9 @@ export async function activeInstanceCount(planId: number): Promise<number> {
   return prisma.instance.count({ where: { planId, status: { notIn: ['DELETED'] } } });
 }
 
-export async function purchase(user: User, input: PurchaseInput): Promise<Instance> {
+export async function purchase(user: User, input: PurchaseInput, context?: { invoiceId: number }): Promise<Instance> {
+  if (input.nightMarketOfferId && !context) throw badRequest(t('night.invoiceMismatch'));
+  if (input.nightMarketOfferId && input.couponCode) throw badRequest(t('night.noStacking'));
   const plan = await prisma.plan.findUnique({ where: { id: input.planId }, include: { product: { include: { nodes: true } } } });
   if (!plan || !plan.enabled || !plan.product.enabled) throw notFound(t('plan.unavailable'));
   const price = plan[CYCLE_PRICE_FIELD[input.cycle]];
@@ -167,9 +174,12 @@ export async function purchase(user: User, input: PurchaseInput): Promise<Instan
   const { instance, task } = await withAllocLocks(node, isNatType(plan.type), (hostIps) =>
     prisma.$transaction(async (tx) => {
       const no = orderNo();
+      if (input.nightMarketOfferId) await lockNightMarket(tx);
+      const night = input.nightMarketOfferId ? await requireNightOffer(tx, user.id, input.nightMarketOfferId, { planId: input.planId, cycle: input.cycle, invoiceId: context!.invoiceId }) : null;
+      const nightRecurring = night && normalizeNightPrize(night.snapshot as unknown as NightPrizeSnapshot).discountMode === 'RECURRING';
       // 优惠码只抵扣首期，续费仍按原价
       const coupon = input.couponCode ? await quoteCoupon(tx, input.couponCode, { userId: user.id, kind: 'NEW', productId: plan.productId, planId: plan.id, cycle: input.cycle, amount: price }) : null;
-      const pay = coupon ? price.minus(coupon.discount) : price;
+      const pay = night ? night.amount : coupon ? price.minus(coupon.discount) : price;
       await changeBalance(
         tx,
         user.id,
@@ -212,7 +222,8 @@ export async function purchase(user: User, input: PurchaseInput): Promise<Instan
           nesting: plan.product.nesting,
           boot: plan.product.boot ?? undefined,
           billingCycle: input.cycle,
-          price,
+          price: nightRecurring ? night.originalPrice : price,
+          nightRenewPrice: nightRecurring ? night.amount : null,
           // 循环抵扣：优惠码绑定到实例，之后每次续费都按它减免
           couponId: coupon?.coupon.mode === 'RECURRING' ? coupon.coupon.id : null,
           expiresAt: addCycle(now, input.cycle),
@@ -228,13 +239,19 @@ export async function purchase(user: User, input: PurchaseInput): Promise<Instan
           type: 'NEW',
           cycle: input.cycle,
           amount: pay,
-          discount: coupon?.discount ?? 0,
+          discount: night ? night.originalPrice.minus(night.amount) : coupon?.discount ?? 0,
+          discountSource: night ? 'NIGHT_MARKET' : coupon ? 'COUPON' : null,
           couponCode: coupon?.coupon.code ?? null,
           couponId: coupon?.coupon.id ?? null,
           description: t('order.newDesc', { plan: plan.name, hostname: input.hostname }),
         },
       });
       if (coupon) await consumeCoupon(tx, coupon.coupon, order, price, coupon.discount);
+      if (night) {
+        const claimed = await tx.nightMarketOffer.updateMany({ where: { id: night.id, purchasedAt: null, invoiceId: context!.invoiceId }, data: { purchasedAt: new Date(), orderId: order.id } });
+        if (!claimed.count) throw conflict(t('night.purchased'));
+        await tx.invoice.update({ where: { id: context!.invoiceId }, data: { status: 'PAID', paidAt: new Date(), instanceId: created.instance.id } });
+      }
       await awardCommission(tx, order);
       return created;
     }),
@@ -279,6 +296,7 @@ type InstanceSpec = Pick<
   | 'boot'
   | 'billingCycle'
   | 'price'
+  | 'nightRenewPrice'
   | 'expiresAt'
   | 'autoRenew'
   | 'couponId'
@@ -448,14 +466,15 @@ export async function renew(
     const inst = await tx.instance.findUniqueOrThrow({ where: { id: instanceId } });
     if (['DELETED', 'DELETING'].includes(inst.status)) throw badRequest(t('renew.deleted'));
     if (inst.status === 'CREATING' && !inst.provisionedAt) throw badRequest(t('renew.notProvisioned'));
+    if (inst.nightRenewPrice !== null && opts.couponCode) throw badRequest(t('night.noStacking'));
     const amount = inst.price.mul(periods);
     const no = orderNo();
     const productId = inst.planId ? ((await tx.plan.findUnique({ where: { id: inst.planId }, select: { productId: true } }))?.productId ?? null) : null;
     // 本次填写的优惠码优先；没有填写时套用实例绑定的循环抵扣优惠码（自动续费也会套用）
     const coupon = opts.couponCode ? await quoteCoupon(tx, opts.couponCode, { userId: inst.userId, kind: 'RENEW', productId, planId: inst.planId, cycle: inst.billingCycle, amount, periods }) : null;
     const bound = !coupon && inst.couponId ? await tx.coupon.findUnique({ where: { id: inst.couponId } }) : null;
-    const discount = coupon?.discount ?? (bound ? recurringDiscount(bound, inst.price, periods) : null);
-    const applied = coupon?.coupon ?? bound;
+    const discount = inst.nightRenewPrice !== null ? amount.minus(inst.nightRenewPrice.mul(periods)) : coupon?.discount ?? (bound ? recurringDiscount(bound, inst.price, periods) : null);
+    const applied = inst.nightRenewPrice !== null ? null : coupon?.coupon ?? bound;
     const pay = discount ? amount.minus(discount) : amount;
     await changeBalance(
       tx,
@@ -478,6 +497,7 @@ export async function renew(
         cycle: inst.billingCycle,
         amount: pay,
         discount: discount ?? 0,
+        discountSource: inst.nightRenewPrice !== null ? 'NIGHT_MARKET' : applied ? 'COUPON' : null,
         couponCode: applied?.code ?? null,
         couponId: applied?.id ?? null,
         description: t(opts.auto ? 'order.autoRenewDesc' : 'order.renewDesc', { hostname: inst.hostname, periods }),
@@ -511,7 +531,7 @@ export async function refundUnprovisioned(tx: Tx, inst: Instance): Promise<void>
  * 实例的剩余价值：每期实际续费价格（扣除循环抵扣优惠）× 剩余时长 / 一期时长，向下取到分。
  * 一期时长按到期时间往前推一个计费周期计算；已过期为 0。
  */
-export function remainingValue(inst: Pick<Instance, 'expiresAt' | 'billingCycle' | 'price'> & { coupon?: Coupon | null }, now = new Date()): Prisma.Decimal {
+export function remainingValue(inst: Pick<Instance, 'expiresAt' | 'billingCycle' | 'price'> & { coupon?: Coupon | null; nightRenewPrice?: Prisma.Decimal | null }, now = new Date()): Prisma.Decimal {
   const left = inst.expiresAt.getTime() - now.getTime();
   if (left <= 0) return new Prisma.Decimal(0);
   const cycleMs = inst.expiresAt.getTime() - dayjs(inst.expiresAt).subtract(CYCLE_MONTHS[inst.billingCycle], 'month').valueOf();

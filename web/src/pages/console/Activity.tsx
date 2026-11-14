@@ -78,7 +78,8 @@ function TaskList() {
         <DataTable
           scrollClassName={TABLE_SCROLL}
           rows={list.data?.items}
-          loading={list.isLoading}
+          loading={list.isLoading || list.isPlaceholderData}
+          refreshing={list.isFetching}
           rowKey={(task) => task.id}
           empty={<Empty title={t('activity.empty')} />}
           columns={[
@@ -176,7 +177,8 @@ function ActivityList() {
         <DataTable
           scrollClassName={TABLE_SCROLL}
           rows={list.data?.items}
-          loading={list.isLoading}
+          loading={list.isLoading || list.isPlaceholderData}
+          refreshing={list.isFetching}
           rowKey={(a) => a.id}
           empty={<Empty title={t('adminTasks.noLogs')} />}
           columns={[

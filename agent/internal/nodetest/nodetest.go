@@ -37,9 +37,10 @@ type Config struct {
 }
 
 type pingTarget struct {
-	ID   string `json:"id"`
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	ID       string `json:"id"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Mainland bool   `json:"mainland,omitempty"`
 }
 
 type pingTargetList struct {
@@ -49,10 +50,11 @@ type pingTargetList struct {
 }
 
 type pingResult struct {
-	ID      string   `json:"id"`
-	Latency *float64 `json:"latency"`
-	Loss    float64  `json:"loss"`
-	Error   string   `json:"error,omitempty"`
+	ID       string   `json:"id"`
+	Latency  *float64 `json:"latency"`
+	Loss     float64  `json:"loss"`
+	TargetIP string   `json:"targetIp,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 type Pinger struct {

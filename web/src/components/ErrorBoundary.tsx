@@ -9,10 +9,14 @@ function isChunkError(error: unknown) {
 
 /**
  * 错误边界：子组件渲染出错时显示「页面出错了」与重试按钮，避免整页白屏。
- * 外层通过 key 在切换页面或标签页时重置。
+ * resetKey 变化时清除错误，不卸载正常的页面或 Suspense 边界。
  */
-export class ErrorBoundary extends Component<{ children: ReactNode }, { error: unknown }> {
-  state: { error: unknown } = { error: null };
+export class ErrorBoundary extends Component<{ children: ReactNode; resetKey?: string }, { error: unknown; resetKey?: string }> {
+  state: { error: unknown; resetKey?: string } = { error: null, resetKey: this.props.resetKey };
+
+  static getDerivedStateFromProps(props: { resetKey?: string }, state: { resetKey?: string }) {
+    return props.resetKey !== state.resetKey ? { error: null, resetKey: props.resetKey } : null;
+  }
 
   static getDerivedStateFromError(error: unknown) {
     return { error };

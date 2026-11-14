@@ -7,6 +7,7 @@ import { LanguageMenu, Logo, ThemeMenu } from '@/layouts/AppShell';
 import { CountryFlag } from '@/components/country';
 import { Tag } from '@/components/ui/misc';
 import { LinkButton } from '@/components/ui/button';
+import { PageTransition } from '@/components/PageTransition';
 import { useI18n } from '@/i18n';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -275,7 +276,7 @@ export function PublicLayout({ active }: { active: string }) {
       {/* 左右边距与顶栏一致，页面内容与 Logo 左边缘对齐 */}
       <main className="flex-1 px-3 pt-24 pb-16 sm:px-4 sm:pt-28">
         <div className="mx-auto max-w-[92rem] px-3 sm:px-4">
-          <Outlet />
+          <PageTransition><Outlet /></PageTransition>
         </div>
       </main>
       <PublicFooter wide />

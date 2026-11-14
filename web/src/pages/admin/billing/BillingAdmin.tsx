@@ -16,10 +16,11 @@ import { cn } from '@/lib/cn';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useCurrency } from '@/lib/queries';
 import { Orders } from './BillingFinance';
+import { Invoices } from './Invoices';
+import { PayChannels } from './PayChannels';
 import { BillingMetrics, DiscountCell, billingTableClass, numericHeader } from './billing-ui';
 
-type Tab = 'overview' | 'orders' | BillingRecordKind;
-const TABS: Tab[] = ['overview', 'orders', 'all', 'recharge', 'charge'];
+type Tab = 'overview' | 'invoices' | 'records' | 'payment';
 
 function Line({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
@@ -129,7 +130,7 @@ function Overview() {
             <Line label={t('billingAdmin.orderTypeCounts', { new: o.monthOrders.newCount, renew: o.monthOrders.renewCount })}>
               <span className="text-xs font-normal text-fg-3">{t('billingAdmin.excludesFullRefunds')}</span>
             </Line>
-            <Line label={t('billingAdmin.couponDiscount')}>
+            <Line label={t('billingAdmin.discountAmount')}>
               {amountWithCount(o.monthOrders.discount, o.monthOrders.discountedCount)}
             </Line>
           </div>
@@ -166,7 +167,11 @@ function Overview() {
               label: t('billingAdmin.totalRecharge'), value: m(o.recharge.total.amount),
               hint: <>{t('billingAdmin.recordSum', { n: o.recharge.total.count })} · {t('billingAdmin.online')} {m(o.recharge.online)} · {L.balanceLogType.REDEEM} {m(o.recharge.redeem)}</>,
             },
-            { label: t('billingAdmin.totalCouponDiscount'), value: m(o.coupons.amount), hint: t('billingAdmin.discountNotIncome', { n: o.coupons.count }) },
+            { label: t('billingAdmin.totalDiscount'), value: m(o.discounts.total.amount), hint: <>
+              <span className="block">{t('billingAdmin.nightDiscount')} {m(o.discounts.nightMarket.amount)}</span>
+              <span className="block">{t('billingAdmin.couponDiscount')} {m(o.discounts.coupon.amount)}</span>
+              {Number(o.discounts.other.amount) > 0 && <span className="block">{t('billingAdmin.otherDiscount')} {m(o.discounts.other.amount)}</span>}
+            </> },
             {
               label: t('billingAdmin.userBalance'), value: m(o.balance.total),
               hint: <>{t('billingAdmin.balanceUsers', { n: o.balance.users })} · {t('billingAdmin.manualNet')} <AmountText amount={o.adjust} currency={currency} /></>,
@@ -175,28 +180,6 @@ function Overview() {
         />
       </Card>
 
-      <Card>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 py-3 sm:px-5 lg:grid-cols-4">
-          {[
-            { label: t('billingAdmin.instances'), value: o.instances.total, hint: `${t('billingAdmin.paid')} ${o.instances.paid} · ${t('billingAdmin.free')} ${o.instances.free}` },
-            {
-              label: t('billingAdmin.instActive'),
-              value: o.instances.active,
-              hint: `${t('billingAdmin.instExpired')} ${o.instances.expired} · ${t('billingAdmin.instSuspended')} ${o.instances.suspended}`,
-            },
-            { label: t('billingAdmin.expiringSoon'), value: o.instances.expiringSoon, hint: t('billingAdmin.notExpired') },
-            { label: t('billingAdmin.autoRenew'), value: o.instances.autoRenew, hint: t('billingAdmin.instanceTotal', { n: o.instances.total }) },
-          ].map((item) => (
-            <div key={item.label} className="min-w-0">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-                <dt className="text-xs text-fg-3">{item.label}</dt>
-                <dd className="tabular text-base font-semibold text-fg">{item.value}</dd>
-              </div>
-              <dd className="mt-1 text-xs text-fg-3">{item.hint}</dd>
-            </div>
-          ))}
-        </dl>
-      </Card>
       <div className="text-xs leading-5 text-fg-3">
         <p>{t('billingAdmin.incomeScope')}</p>
         <p>{t('billingAdmin.comparisonScope')} · {t('billingAdmin.reportAsOf', { time: formatDate(o.period.asOf) })}</p>
@@ -212,7 +195,7 @@ const RECORD_TYPES: Record<BillingRecordKind, readonly BalanceLogType[]> = {
 };
 
 /** 余额明细 / 充值记录 / 扣费记录共用同一资金口径。 */
-function Records({ kind }: { kind: BillingRecordKind }) {
+function Records({ kind, onKindChange }: { kind: BillingRecordKind; onKindChange: (kind: BillingRecordKind) => void }) {
   const { t, L } = useI18n();
   const currency = useCurrency();
   const [type, setType] = useState<BalanceLogType | 'all'>('all');
@@ -283,6 +266,13 @@ function Records({ kind }: { kind: BillingRecordKind }) {
           )
         }
       >
+        <Select<BillingRecordKind>
+          aria-label={t('billingAdmin.recordScope')}
+          className="sm:w-40"
+          value={kind}
+          onChange={onKindChange}
+          options={(['all', 'recharge', 'charge'] as const).map(value => ({ value, label: t(`billingAdmin.scope.${value}`), description: t(`billingAdmin.kindHint.${value}`) }))}
+        />
         <Select<BalanceLogType | 'all'>
           aria-label={t('common.type')}
           className="sm:w-44"
@@ -347,10 +337,10 @@ function Records({ kind }: { kind: BillingRecordKind }) {
               : [
                   {
                     key: 'discount',
-                    header: numericHeader(t('billingAdmin.couponDiscount')),
+                    header: numericHeader(t('billingAdmin.discountAmount')),
                     cell: (l: BalanceLogDTO) =>
                       l.order && l.type !== 'REFUND' ? (
-                        <DiscountCell discount={l.order.discount} code={l.order.couponCode} currency={currency} />
+                        <DiscountCell discount={l.order.discount} source={l.order.discountSource} code={l.order.couponCode} currency={currency} />
                       ) : (
                         <span className="block text-fg-4 md:text-right">—</span>
                       ),
@@ -397,11 +387,15 @@ function Records({ kind }: { kind: BillingRecordKind }) {
 export default function AdminBilling() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
-  const tab = (TABS.find((x) => x === params.get('tab')) ?? 'overview') as Tab;
+  const requested = params.get('tab');
+  const legacyKind = requested === 'all' || requested === 'recharge' || requested === 'charge' ? requested : null;
+  const tab: Tab = requested === 'orders' || requested === 'invoices' ? 'invoices' : legacyKind || requested === 'records' ? 'records' : requested === 'payment' ? 'payment' : 'overview';
+  const view = requested === 'orders' || params.get('view') === 'orders' ? 'orders' : 'invoices';
+  const kindParam = legacyKind ?? params.get('kind');
+  const kind: BillingRecordKind = kindParam === 'recharge' || kindParam === 'charge' ? kindParam : 'all';
   const setTab = (next: Tab) => {
-    const p = new URLSearchParams(params);
-    if (next === 'overview') p.delete('tab');
-    else p.set('tab', next);
+    const p = new URLSearchParams();
+    if (next !== 'overview') p.set('tab', next);
     setParams(p, { replace: true });
   };
   return (
@@ -416,21 +410,34 @@ export default function AdminBilling() {
         listClassName="flex-wrap overflow-x-visible overflow-y-visible gap-1 [&>button]:px-2 sm:gap-1.5 sm:[&>button]:px-3"
         items={[
           { value: 'overview', label: t('billingAdmin.tabOverview') },
-          { value: 'orders', label: t('billing.tabOrders') },
-          { value: 'all', label: t('billing.tabLogs') },
-          { value: 'recharge', label: t('billingAdmin.tabRecharge') },
-          { value: 'charge', label: t('billingAdmin.tabCharge') },
+          { value: 'invoices', label: t('billingAdmin.tabInvoices') },
+          { value: 'records', label: t('billingAdmin.tabRecords') },
+          { value: 'payment', label: t('payAdmin.channels') },
         ]}
       />
       <div key={tab} className="panel-enter">
         {tab === 'overview' ? (
           <Overview />
-        ) : tab === 'orders' ? (
+        ) : tab === 'invoices' ? (
           <Card className={cn('overflow-hidden', billingTableClass)}>
-            <Orders />
+            <Toolbar right={<span className="pt-2 text-xs text-fg-3">{t(view === 'invoices' ? 'billingAdmin.invoiceViewHint' : 'billingAdmin.ordersViewHint')}</span>}>
+              <Select<'invoices' | 'orders'>
+                aria-label={t('billingAdmin.documentView')}
+                className="sm:w-56"
+                value={view}
+                onChange={next => setParams({ tab: 'invoices', ...(next === 'orders' ? { view: 'orders' } : {}) }, { replace: true })}
+                options={[
+                  { value: 'invoices', label: t('billingAdmin.invoiceView'), description: t('billingAdmin.invoiceViewHint') },
+                  { value: 'orders', label: t('billingAdmin.ordersView'), description: t('billingAdmin.ordersViewHint') },
+                ]}
+              />
+            </Toolbar>
+            {view === 'orders' ? <Orders /> : <Invoices />}
           </Card>
+        ) : tab === 'payment' ? (
+          <PayChannels />
         ) : (
-          <Records kind={tab} />
+          <Records key={kind} kind={kind} onKindChange={next => setParams({ tab: 'records', ...(next !== 'all' ? { kind: next } : {}) }, { replace: true })} />
         )}
       </div>
     </>

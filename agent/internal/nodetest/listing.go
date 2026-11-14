@@ -36,9 +36,13 @@ type ListingJob struct {
 	Kind string `json:"kind"`
 	// 独立 IPv4 使用桥接网卡（bridged）时：实例 MAC、网关与桥接网卡名。
 	// 这类线路上游通常按 MAC 绑定地址，请求必须带实例的 MAC，才与实例自己发出的报文一致
-	MAC     string `json:"mac,omitempty"`
-	Gateway string `json:"gateway,omitempty"`
-	Bridge  string `json:"bridge,omitempty"`
+	MAC       string       `json:"mac,omitempty"`
+	Gateway   string       `json:"gateway,omitempty"`
+	Bridge    string       `json:"bridge,omitempty"`
+	RequestID string       `json:"requestId,omitempty"`
+	Targets   []pingTarget `json:"targets,omitempty"`
+	Controls  []pingTarget `json:"controls,omitempty"`
+	Count     int          `json:"count,omitempty"`
 }
 
 // 发送方式（回传面板存档）：local 绑定本机地址；default 默认源地址；
@@ -53,8 +57,8 @@ const (
 // ListingRunner 执行上架拨测任务：同一任务只执行一次，最多同时执行 2 个
 type ListingRunner struct {
 	mu      sync.Mutex
-	running map[int]bool
-	done    map[int]time.Time
+	running map[string]bool
+	done    map[string]time.Time
 	active  atomic.Int32
 	// 以下在测试中替换
 	icmpOK  func() bool
@@ -63,7 +67,7 @@ type ListingRunner struct {
 }
 
 func NewListingRunner() *ListingRunner {
-	return &ListingRunner{running: map[int]bool{}, done: map[int]time.Time{}, icmpOK: icmpAvailable, isLocal: localAddress, measure: measureListing}
+	return &ListingRunner{running: map[string]bool{}, done: map[string]time.Time{}, icmpOK: icmpAvailable, isLocal: localAddress, measure: measureIPv4}
 }
 
 // MaybeRun 开始回复中尚未执行的任务（在后台进行，不阻塞上报）
@@ -75,10 +79,10 @@ func (r *ListingRunner) MaybeRun(ctx context.Context, c *panel.Client, jobs []Li
 				delete(r.done, id)
 			}
 		}
-		_, finished := r.done[job.ID]
-		skip := job.ID <= 0 || r.running[job.ID] || finished || r.active.Load() >= 2
+		_, finished := r.done[job.RequestID]
+		skip := job.ID <= 0 || job.RequestID == "" || r.running[job.RequestID] || finished || r.active.Load() >= 2
 		if !skip {
-			r.running[job.ID] = true
+			r.running[job.RequestID] = true
 			r.active.Add(1)
 		}
 		r.mu.Unlock()
@@ -86,14 +90,15 @@ func (r *ListingRunner) MaybeRun(ctx context.Context, c *panel.Client, jobs []Li
 			continue
 		}
 		go func(job ListingJob) {
-			defer func() {
-				r.mu.Lock()
-				delete(r.running, job.ID)
-				r.done[job.ID] = time.Now()
-				r.mu.Unlock()
-				r.active.Add(-1)
-			}()
-			if err := r.run(ctx, c, job); err != nil {
+			err := r.run(ctx, c, job)
+			r.mu.Lock()
+			delete(r.running, job.RequestID)
+			if err == nil {
+				r.done[job.RequestID] = time.Now()
+			}
+			r.mu.Unlock()
+			r.active.Add(-1)
+			if err != nil {
 				log.Printf("上架拨测 #%d 失败：%v", job.ID, err)
 			}
 		}(job)
@@ -110,61 +115,102 @@ type listingPlan struct {
 
 func (r *ListingRunner) run(ctx context.Context, c *panel.Client, job ListingJob) error {
 	started := time.Now()
-	method, via, results, testErr := r.test(ctx, c, job)
-	payload := map[string]any{"id": job.ID}
+	method, via, results, verification, testErr := r.test(ctx, c, job)
+	payload := map[string]any{"id": job.ID, "requestId": job.RequestID, "ip": job.IP}
 	if testErr != nil {
 		payload["error"] = testErr.Error()
 	} else {
 		payload["method"], payload["via"], payload["results"] = method, via, results
+		if verification != nil {
+			payload["verification"] = verification
+		}
 	}
 	body, _ := json.Marshal(payload)
 	res, err := c.Request(ctx, http.MethodPost, "/api/agent/nodes/listing-ping", body)
 	if err != nil {
 		return err
 	}
-	if res.Status != http.StatusOK {
+	if res.Status != http.StatusOK || !c.Trusted(res) {
 		return fmt.Errorf("回传拨测结果失败（%d）", res.Status)
 	}
 	if testErr != nil {
-		return testErr
+		log.Printf("上架拨测 #%d 未完成：%v", job.ID, testErr)
+		return nil
 	}
 	log.Printf("上架拨测 #%d 完成：%s，方式 %s/%s，耗时 %s", job.ID, job.IP, method, via, time.Since(started).Round(time.Second))
 	return nil
 }
 
-// test 拉取目标并逐个测量，返回测量方式（icmp / tcp）、发送方式与结果
-func (r *ListingRunner) test(ctx context.Context, c *panel.Client, job ListingJob) (string, string, []pingResult, error) {
-	targets, err := fetchTargets(ctx, c)
-	if err != nil {
-		return "", "", nil, err
+type listingVerification struct {
+	Results              []pingResult `json:"results"`
+	Controls             []pingResult `json:"controls"`
+	ConfirmationControls []pingResult `json:"confirmationControls"`
+}
+
+// 使用随任务固定的目标，仅执行真实 ICMP；国内全不通时增加同源境外对照与第二轮复核。
+func (r *ListingRunner) test(ctx context.Context, _ *panel.Client, job ListingJob) (string, string, []pingResult, *listingVerification, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if len(job.Targets) == 0 || len(job.Targets) > 200 || len(job.Controls) != 3 {
+		return "", "", nil, nil, errors.New("无效的上架拨测目标，请升级面板")
 	}
 	plan, cleanup, err := r.plan(job)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, nil, err
 	}
 	defer cleanup()
-	count := targets.Count
-	if count <= 0 || count > 10 {
+	if !plan.icmp {
+		return "", "", nil, nil, errors.New("没有原始套接字权限，无法进行真实 ICMP 拨测")
+	}
+	count := job.Count
+	if count < 2 || count > 10 {
 		count = 4
 	}
-	results := make([]pingResult, len(targets.Targets))
+	results := r.measureTargets(ctx, job.Targets, count, plan)
+	for _, result := range results {
+		if result.Error != "" {
+			return "", "", nil, nil, fmt.Errorf("目标 %s 拨测失败：%s", result.ID, result.Error)
+		}
+	}
+	mainland := map[string]bool{}
+	for _, target := range job.Targets {
+		if target.Mainland {
+			mainland[target.ID] = true
+		}
+	}
+	for _, result := range results {
+		if mainland[result.ID] && result.Latency != nil && result.Loss < 100 {
+			return "icmp", plan.via, results, nil, nil
+		}
+	}
+	if len(mainland) == 0 {
+		return "icmp", plan.via, results, nil, nil
+	}
+	verification := &listingVerification{Controls: r.measureTargets(ctx, job.Controls, 2, plan)}
+	verification.Results = r.measureTargets(ctx, job.Targets, count, plan)
+	verification.ConfirmationControls = r.measureTargets(ctx, job.Controls, 2, plan)
+	return "icmp", plan.via, results, verification, nil
+}
+
+func (r *ListingRunner) measureTargets(ctx context.Context, targets []pingTarget, count int, plan listingPlan) []pingResult {
+	results := make([]pingResult, len(targets))
 	sem := make(chan struct{}, pingConcurrency)
 	var wg sync.WaitGroup
-	for i, t := range targets.Targets {
+	for i, t := range targets {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, t pingTarget) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				results[i] = pingResult{ID: t.ID, Loss: 100, Error: ctx.Err().Error()}
+				return
+			}
 			results[i] = r.measure(ctx, t, count, plan)
 		}(i, t)
 	}
 	wg.Wait()
-	method := "icmp"
-	if !plan.icmp {
-		method = "tcp"
-	}
-	return method, plan.via, results, nil
+	return results
 }
 
 // plan 按任务选择发送方式
@@ -192,51 +238,6 @@ func (r *ListingRunner) plan(job ListingJob) (listingPlan, func(), error) {
 		via = viaSpoofL2
 	}
 	return listingPlan{via: via, icmp: true, src: ip, spoof: sp}, sp.Close, nil
-}
-
-// measureListing 解析目标域名并按计划测量
-func measureListing(ctx context.Context, t pingTarget, count int, plan listingPlan) pingResult {
-	out := pingResult{ID: t.ID, Loss: 100}
-	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	ips, err := net.DefaultResolver.LookupIP(rctx, "ip4", t.Host)
-	cancel()
-	if err != nil || len(ips) == 0 {
-		return out
-	}
-	dst := ips[0].To4()
-	var rtts []time.Duration
-	switch {
-	case plan.spoof != nil:
-		rtts = plan.spoof.Ping(dst, count)
-	case plan.icmp:
-		bind := "0.0.0.0"
-		if plan.src != nil {
-			bind = plan.src.String()
-		}
-		rtts = icmpPingFrom(bind, dst, count)
-	default:
-		rtts = tcpPingFrom(ctx, plan.src, net.JoinHostPort(dst.String(), fmt.Sprint(t.Port)), count)
-	}
-	return summarize(t.ID, rtts, count)
-}
-
-// fetchTargets 从面板拉取测试目标（与节点测试相同）
-func fetchTargets(ctx context.Context, c *panel.Client) (*pingTargetList, error) {
-	res, err := c.Request(ctx, http.MethodGet, "/api/agent/nodes/ping-targets", nil)
-	if err != nil {
-		return nil, err
-	}
-	if res.Status != http.StatusOK || !c.Trusted(res) {
-		return nil, fmt.Errorf("拉取测试目标失败（%d）", res.Status)
-	}
-	var list pingTargetList
-	if err := json.Unmarshal(res.Body, &list); err != nil {
-		return nil, err
-	}
-	if len(list.Targets) == 0 {
-		return nil, errors.New("面板没有下发测试目标")
-	}
-	return &list, nil
 }
 
 // localAddress 判断地址是否配置在本机网卡上

@@ -36,6 +36,18 @@ interface CaddyApi {
   load(config: unknown): Promise<void>;
 }
 
+interface CaddyRuntimeConfig {
+  admin?: { identity?: { issuers?: { module?: string; ca?: string }[] } };
+  apps?: { pki?: unknown };
+  storage?: unknown;
+}
+
+function managedAdminCa(config: CaddyRuntimeConfig | null): string | undefined {
+  return config?.admin?.identity?.issuers?.find(
+    (issuer) => issuer.module === 'internal' && /^paledove-admin-[a-f0-9]{16}$/.test(issuer.ca ?? ''),
+  )?.ca;
+}
+
 class HttpCaddyClient implements CaddyApi {
   private agent: Agent;
   private origin: string;
@@ -83,7 +95,9 @@ class HttpCaddyClient implements CaddyApi {
 
   /** Caddy 本地 CA 的根证书（远程管理端点的证书由它签发） */
   async rootCertificate(): Promise<string> {
-    const root = (JSON.parse(await this.request('GET', '/pki/ca/local')) as { root_certificate?: string }).root_certificate?.trim();
+    const config = await this.getConfig() as CaddyRuntimeConfig | null;
+    const ca = managedAdminCa(config) ?? 'local';
+    const root = (JSON.parse(await this.request('GET', `/pki/ca/${ca}`)) as { root_certificate?: string }).root_certificate?.trim();
     if (!root) throw new Error('Caddy did not return its local CA certificate');
     return root;
   }
@@ -283,10 +297,14 @@ export async function syncSites(nodeId: number): Promise<void> {
       ...proxies.map((p) => ({ domain: p.domain, https: p.https, upstream: parseUpstream(p.upstream) })),
     ];
     const settings = await getSettings();
-    const config = renderCaddyConfig(await adminOptions(node), sites, settings.acmeEmail || undefined);
     try {
       const client = await caddyClient(node);
-      await client.load(config);
+      const current = (await client.getConfig()) as CaddyRuntimeConfig | null;
+      // Keep the issuer registered by the installer; switching back to local can
+      // resurrect its expired chain and invalidate the CA trusted by the panel.
+      const config = renderCaddyConfig({ ...(await adminOptions(node)), caId: managedAdminCa(current) }, sites, settings.acmeEmail || undefined);
+      if (current?.apps?.pki) config.apps.pki = current.apps.pki;
+      await client.load({ ...config, ...(current?.storage !== undefined ? { storage: current.storage } : {}) });
       await mark('ACTIVE', null);
     } catch (err) {
       const message = t('caddy.syncFailed', { message: caddyErrorMessage(err) }).slice(0, 500);

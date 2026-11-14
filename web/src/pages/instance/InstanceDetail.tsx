@@ -101,12 +101,12 @@ function RenameDialog({ inst, open, onClose }: { inst: AnyInstance; open: boolea
   );
 }
 
-// 按钮尺寸与 incudal 一致：窄屏 btn-sm（h-7、text-xs），sm 起 btn（h-9、px-4、text-sm）；部分按钮窄屏只显示图标
+// 按钮尺寸：窄屏 btn-sm（h-7、text-xs），sm 起 btn（h-9、px-4、text-sm）；部分按钮窄屏只显示图标
 const compact = 'h-7 rounded-lg px-3 text-xs [&_svg]:size-4 sm:h-9 sm:px-4 sm:text-sm';
 const iconOnly = 'max-sm:px-2';
 
 /**
- * 标题栏右侧操作（顺序与 incudal 对齐）：
+ * 标题栏右侧操作：
  * 重命名、终端、开机/关机、重启（仅运行中）、重装、更多；管理员另有同步状态、封禁/解封、删除
  */
 function HeaderActions({ inst, admin, onTab }: { inst: AnyInstance; admin?: boolean; onTab: (t: Tab) => void }) {
@@ -136,7 +136,7 @@ function HeaderActions({ inst, admin, onTab }: { inst: AnyInstance; admin?: bool
       >
         <span className="max-sm:hidden">{t('detail.rename')}</span>
       </Button>
-      {/* 终端按钮为绿色（与 incudal 一致）；窗口由 TerminalDock 管理：关闭时缩小到右下角，连接保持到离开实例管理页面；关机时显示但禁用 */}
+      {/* 终端按钮为绿色；窗口由 TerminalDock 管理：关闭时缩小到右下角，连接保持到离开实例管理页面；关机时显示但禁用 */}
       <Button
         variant="success"
         icon={<SquareTerminal />}
@@ -401,7 +401,7 @@ function InstanceDetailPage({ admin }: { admin?: boolean }) {
   return (
     <>
       {/*
-        标题栏：返回（无边框小按钮）| 系统图标、名称与状态，下方实例类型 · 镜像 · 地区；右侧操作按钮（与 incudal 一致）。窄屏上下排列
+        标题栏：返回（无边框小按钮）| 系统图标、名称与状态，下方实例类型 · 镜像 · 地区；右侧操作按钮。窄屏上下排列
       */}
       <div className="mb-4 flex flex-col gap-4 border-b border-line pb-4 sm:mb-6 sm:pb-5 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
         <div className="flex min-w-0 items-center gap-3">
@@ -436,7 +436,7 @@ function InstanceDetailPage({ admin }: { admin?: boolean }) {
         {inst.status !== 'DELETED' && <HeaderActions inst={inst} admin={admin} onTab={setTab} />}
       </div>
 
-      {/* 标签栏（与 incudal 一致）：灰底分段（surface-3，即 incudal 的 gray-100），选中项白底；窄屏只显示图标 */}
+      {/* 标签栏：灰底分段（surface-3），选中项白底；窄屏只显示图标 */}
       <div role="tablist" className="scrollbar-none mb-4 flex w-full gap-1 overflow-x-auto rounded-lg bg-surface-3 p-1 sm:mb-6 sm:w-fit">
         {(
           [

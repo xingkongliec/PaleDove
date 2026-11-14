@@ -41,14 +41,14 @@ function TriggerIcon() {
 function OptionList<T extends string | number>({ options }: { options: SelectOption<T>[] }) {
   return (
     <BaseSelect.Portal>
-      <BaseSelect.Positioner className="z-[70] outline-none" sideOffset={4} alignItemWithTrigger={false}>
+      <BaseSelect.Positioner className="z-[70] outline-none" sideOffset={4} align="start" alignItemWithTrigger={false}>
         <BaseSelect.Popup
           className={cn(
-            // 与输入框同宽，说明文字过长时换行，不伸出所在的表单或弹窗；输入框很窄时（如版本选择）最多放宽到 16rem
-            'popup-anim min-w-[var(--anchor-width)] max-w-[max(var(--anchor-width),16rem)] overflow-hidden rounded-lg border border-line bg-surface p-1 text-[13px] shadow-card',
+            // 宽度由触发框决定，避免内容测量和滚动条出现时改变宽度；窄触发框最多扩展至 16rem。
+            'popup-anim w-max min-w-[min(var(--anchor-width),var(--available-width))] max-w-[min(max(var(--anchor-width),16rem),var(--available-width))] overflow-hidden rounded-lg border border-line bg-surface p-1 text-[13px] shadow-card',
           )}
         >
-          <BaseSelect.List className="scrollbar-thin max-h-[min(var(--available-height),18rem)] overflow-y-auto">
+          <BaseSelect.List className="scrollbar-thin max-h-[min(calc(var(--available-height)_-_0.625rem),18rem)] overflow-y-auto overscroll-contain">
             {options.map((o) => (
               <BaseSelect.Item
                 key={String(o.value)}

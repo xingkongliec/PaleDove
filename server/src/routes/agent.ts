@@ -102,7 +102,7 @@ export default async function agentRoutes(app: FastifyInstance) {
     return { ok: true, message: `${t('install.registered', { name: node.name, version: result?.version ?? '' })}${detected}${warnings}` };
   });
 
-  // ───────── 宿主机 Agent（参考 incudal）─────────
+  // ───────── 宿主机 Agent ─────────
 
   // 通用安装脚本：不含任何密钥，配合安装命令里的一次性令牌使用
   app.get('/api/agent/install.sh', limit, async (req, reply) => {
@@ -220,7 +220,7 @@ export default async function agentRoutes(app: FastifyInstance) {
     // 智能分流：只下发配置版本，变化时 Agent 再拉取完整配置（只发给签名认证且支持该能力的 Agent）
     const egress = auth.secret && body.capabilities?.includes('egress') ? { version: await egressVersion(node.id) } : null;
     // 上架拨测：交易市场上架时的待执行任务（只发给签名认证且支持该能力的 Agent）
-    const listingPings = auth.secret && body.capabilities?.includes('listing-ping') ? await agentListingJobs(node.id) : [];
+    const listingPings = auth.secret && body.capabilities?.includes('listing-ping-v2') ? await agentListingJobs(node.id) : [];
     const ipv4Checks = auth.secret && body.capabilities?.includes('ipv4-check') ? await agentIpv4Checks(node.id) : [];
     return signedReply(reply, auth, {
       ok: true,
@@ -263,9 +263,16 @@ export default async function agentRoutes(app: FastifyInstance) {
     const body = parse(
       z.object({
         id: z.number().int().positive(),
+        requestId: z.string().uuid().optional(),
+        ip: z.string().max(64).optional(),
         method: z.enum(['icmp', 'tcp']).optional(),
         via: z.enum(['local', 'default', 'spoof', 'spoof-l2']).optional(),
-        results: z.array(z.object({ id: z.string().max(32), latency: z.number().min(0).max(60_000).nullable(), loss: z.number().min(0).max(100) })).max(500).optional(),
+        results: z.array(z.object({ id: z.string().max(32), latency: z.number().min(0).max(60_000).nullable(), loss: z.number().min(0).max(100), targetIp: z.string().max(64).optional(), error: z.string().max(1000).optional() })).max(500).optional(),
+        verification: z.object({
+          results: z.array(z.object({ id: z.string().max(32), latency: z.number().min(0).max(60_000).nullable(), loss: z.number().min(0).max(100), targetIp: z.string().max(64).optional(), error: z.string().max(1000).optional() })).max(500),
+          controls: z.array(z.object({ id: z.string().max(32), latency: z.number().min(0).max(60_000).nullable(), loss: z.number().min(0).max(100), targetIp: z.string().max(64).optional(), error: z.string().max(1000).optional() })).max(3),
+          confirmationControls: z.array(z.object({ id: z.string().max(32), latency: z.number().min(0).max(60_000).nullable(), loss: z.number().min(0).max(100), targetIp: z.string().max(64).optional(), error: z.string().max(1000).optional() })).max(3),
+        }).optional(),
         error: z.string().max(1000).optional(),
       }),
       req.body,

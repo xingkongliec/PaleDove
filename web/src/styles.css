@@ -334,24 +334,21 @@
   animation-timing-function: var(--ease-smooth);
 }
 
-/* 下拉 / 菜单 / 提示：从触发元素的位置展开，进入稍慢、退出更快 */
+/* 下拉 / 菜单 / 提示只淡入淡出，避免宽表单中的文字和边缘随缩放移动。 */
 .popup-anim {
-  transform-origin: var(--transform-origin, center);
-  transition:
-    opacity 170ms var(--ease-smooth),
-    transform 170ms var(--ease-smooth);
+  transition: opacity 150ms var(--ease-smooth);
 }
 .popup-anim[data-starting-style] {
   opacity: 0;
-  transform: scale(0.95) translateY(-3px);
 }
 .popup-anim[data-ending-style] {
   opacity: 0;
-  transform: scale(0.97);
-  transition-duration: 110ms;
+  transition-duration: 100ms;
 }
-.popup-anim[data-side='top'][data-starting-style] {
-  transform: scale(0.95) translateY(3px);
+
+/* 包括 render={<Button />} 的浮层触发器和折叠按钮，按压时也必须保持尺寸稳定。 */
+:is(button, a[href], [role='button']):is([aria-haspopup]:not([aria-haspopup='false']), [aria-expanded], [role='combobox']) {
+  scale: 1;
 }
 
 /* 对话框：轻微上浮 + 缩放；手机端从底部滑入 */
@@ -429,7 +426,7 @@
 /* 顶部加载进度条：进行中缓慢推进到约 85%，完成时补满并淡出。用 transform 缩放而不是改 width，推进过程中不触发重排 */
 @keyframes top-progress-run {
   0% {
-    transform: scaleX(0);
+    transform: var(--progress-start, scaleX(0));
   }
   20% {
     transform: scaleX(0.45);
@@ -444,10 +441,10 @@
   transform-origin: left;
   animation: top-progress-run 6s cubic-bezier(0.1, 0.7, 0.2, 1);
 }
-/* 从进行中停留的 85% 补满（不写起始值时元素一出现就是 100%，看不到补满的过程） */
+/* 从当前实际进度补满，避免完成时进度条突然向前跳。 */
 @keyframes top-progress-done {
   from {
-    transform: scaleX(0.85);
+    transform: var(--progress-start, scaleX(0.85));
     opacity: 1;
   }
   60% {
@@ -483,20 +480,51 @@
 /* 标签页内容切换：只淡入（原因同 .page-enter） */
 @keyframes panel-in {
   from {
-    opacity: 0;
+    opacity: 0.72;
   }
 }
 .panel-enter {
-  animation: panel-in 180ms var(--ease-smooth) backwards;
+  animation: panel-in 220ms var(--ease-smooth) backwards;
 }
 /* 列表数据出现：整表同时轻微淡入，不逐行、不位移 */
 @keyframes row-in {
   from {
-    opacity: 0;
+    opacity: 0.72;
   }
 }
 .row-in {
   animation: row-in 160ms ease-out backwards;
+}
+
+/* 整页由 PageTransition 控制，局部标签和数据区域保留各自的轻量过渡。 */
+.route-view :is(.page-enter, .fade-in) {
+  animation: none;
+}
+.route-view .reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+@keyframes button-loading-in {
+  from {
+    opacity: 0.35;
+    scale: 0.75;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+.button-loading-icon {
+  animation: button-loading-in 180ms var(--ease-smooth);
+}
+.data-loading-progress {
+  animation: fade-in 180ms var(--ease-smooth) 150ms backwards;
+}
+@media (min-width: 64rem) {
+  .console-scroll {
+    scrollbar-gutter: stable;
+  }
 }
 
 /* 骨架屏：放在 components 层，className 里的 rounded-* / absolute 等工具类可以覆盖；

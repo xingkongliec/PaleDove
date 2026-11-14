@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { FastifyInstance } from 'fastify';
 import { normalizeArch, type PlanDTO } from '../src/shared/index.ts';
+import type { SaleNodeDTO } from '../src/services/billing.ts';
 
 describe('persistent host architecture and offline store images', () => {
   let app: FastifyInstance;
@@ -31,7 +32,7 @@ describe('persistent host architecture and offline store images', () => {
   const saleNodes = async (product = singleProductId) => {
     const response = await app.inject({ method: 'GET', url: `/api/public/products/${product}/nodes?region=Test` });
     expect(response.statusCode, response.body).toBe(200);
-    return response.json().nodes as Array<{ id: number; imageIds: number[] | null; plans: number[] }>;
+    return response.json().nodes as SaleNodeDTO[];
   };
   const regionImages = async () => (await catalog.listSalePlans()).find(plan => plan.id === singlePlanId)!.regionInfo.Test!.imageIds;
 
@@ -99,7 +100,7 @@ describe('persistent host architecture and offline store images', () => {
     await reports.clearHostReport(nodeId);
     await db.node.update({ where: { id: nodeId }, data: { status: 'OFFLINE' } });
     expect((await node()).arch).toBe('aarch64');
-    expect((await saleNodes())[0]).toMatchObject({ imageIds: [armImageId], plans: [] });
+    expect((await saleNodes())[0]).toMatchObject({ status: 'OFFLINE', imageIds: [armImageId], plans: [] });
     expect(await regionImages()).toEqual([armImageId]);
   });
 
@@ -126,8 +127,8 @@ describe('persistent host architecture and offline store images', () => {
     await db.node.update({ where: { id: nodeId }, data: { status: 'OFFLINE', imageIds: [x86ImageId, armImageId] } });
     const nodes = await saleNodes(productId);
     expect(nodes).toHaveLength(2);
-    expect(nodes.find(node => node.id === nodeId)).toMatchObject({ imageIds: [x86ImageId], plans: [] });
-    expect(nodes.find(node => node.id === armId)).toMatchObject({ imageIds: [armImageId] });
+    expect(nodes.find(node => node.id === nodeId)).toMatchObject({ status: 'OFFLINE', imageIds: [x86ImageId], plans: [] });
+    expect(nodes.find(node => node.id === armId)).toMatchObject({ status: 'ONLINE', imageIds: [armImageId] });
     expect(nodes.find(node => node.id === armId)!.plans).not.toHaveLength(0);
   });
 

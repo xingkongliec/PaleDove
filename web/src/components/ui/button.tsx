@@ -39,21 +39,46 @@ export interface ButtonProps extends Omit<ComponentProps<typeof BaseButton>, 'cl
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
+  loadingText?: ReactNode;
   icon?: ReactNode;
   className?: string;
 }
 
-export function Button({ variant = 'secondary', size = 'md', loading, icon, className, children, disabled, ...props }: ButtonProps) {
+function LoadingIcon({ active = true, className }: { active?: boolean; className?: string }) {
+  return <span className={cn('inline-flex items-center justify-center', active && 'button-loading-icon', className)} aria-hidden><LoaderCircle className={active ? 'animate-spin' : undefined} /></span>;
+}
+
+export function Button({ variant = 'secondary', size = 'md', loading, loadingText, icon, className, children, disabled, ...props }: ButtonProps) {
   return (
     <BaseButton
       type="button"
       disabled={disabled || loading}
       focusableWhenDisabled={loading}
-      className={buttonClass(variant, size, className)}
+      aria-busy={loading || undefined}
+      className={buttonClass(variant, size, cn('relative', className))}
       {...props}
     >
-      {loading ? <LoaderCircle className="animate-spin" aria-hidden /> : icon}
-      {children}
+      {loadingText ? (
+        <span className="inline-grid items-center justify-items-center">
+          <span className={cn('col-start-1 row-start-1 inline-flex items-center gap-1.5', loading && 'invisible')} aria-hidden={loading || undefined}>
+            {icon}{children}
+          </span>
+          <span className={cn('col-start-1 row-start-1 inline-flex items-center gap-1.5', !loading && 'invisible')} aria-hidden={!loading || undefined}>
+            <LoadingIcon active={!!loading} />{loadingText}
+          </span>
+        </span>
+      ) : (
+        <>
+          {loading && icon ? (
+            <span className="relative inline-flex items-center justify-center">
+              <span className="opacity-0">{icon}</span>
+              <LoadingIcon className="absolute" />
+            </span>
+          ) : icon}
+          {loading && !icon ? <span className="opacity-0">{children}</span> : children}
+          {loading && !icon && <LoadingIcon className="absolute" />}
+        </>
+      )}
     </BaseButton>
   );
 }

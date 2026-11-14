@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { renderNodeInstallScript } from '../src/services/agent/install-script.ts';
+import { renderNodeInstallScript, shq } from '../src/services/agent/install-script.ts';
 
 const ui = readFileSync(new URL('../templates/install-ui.sh', import.meta.url), 'utf8');
 const run = (body: string) => spawnSync('bash', ['-s'], {
@@ -27,7 +27,103 @@ ${body}
 `,
 });
 
+// Keep real menu parsing and terminal output; only replace the user's keystrokes.
+const terminal = (body: string, answers: string[]) => run(`exec 9>&1
+answers=(${answers.map(shq).join(' ')})
+answer_index=0
+read() {
+  if [ "$#" != 2 ] || [ "$1" != -r ] || [ "$2" != UI_VALUE ]; then builtin read "$@"; return; fi
+  [ "$answer_index" -lt "\${#answers[@]}" ] || return 1
+  UI_VALUE=\${answers[$answer_index]}
+  answer_index=$((answer_index + 1))
+}
+${body}`);
+
 describe('interactive Incus installer', () => {
+  it('uses numbered inline menus even when a host has dialog tools installed', () => {
+    const result = terminal(`TERM=xterm-256color
+UI_TEXT_ONLY=0
+unset NO_COLOR
+whiptail() { die MUST_NOT_OPEN_DIALOG; }
+ui_init
+ui_menu '选择存储池类型' btrfs btrfs Btrfs zfs ZFS lvm LVM dir 目录
+printf 'RESULT=%s' "$UI_VALUE"`, ['invalid', '4']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('1)');
+    expect(result.stdout).toContain('Btrfs');
+    expect(result.stdout).toContain('4)');
+    expect(result.stdout).toContain('RESULT=dir');
+    expect(result.stdout).toContain(String.fromCharCode(27) + '[1;36m');
+    expect(result.stdout).not.toContain(String.fromCharCode(27) + '[44m');
+    expect(result.stderr).toContain('无效选项');
+    expect(ui).not.toMatch(/whiptail|UI_STYLE|--checklist|--inputbox/);
+  });
+
+  for (const setup of ['TERM=dumb; UI_TEXT_ONLY=0; unset NO_COLOR', 'TERM=xterm; UI_TEXT_ONLY=1; unset NO_COLOR', 'TERM=xterm; UI_TEXT_ONLY=0; NO_COLOR=1']) {
+    it(`keeps menus uncolored when ${setup}`, () => {
+      const result = terminal(`${setup}
+ui_init
+ui_menu '选择操作' install install 安装 cancel 退出
+printf 'RESULT=%s' "$UI_VALUE"`, ['']);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain(String.fromCharCode(27));
+      expect(result.stdout).toContain('RESULT=install');
+    });
+  }
+
+  for (const [answer, expected] of [['y', '1'], ['N', '0'], ['', '0'], ['1', '1'], ['2', '0']]) {
+    it(`accepts yes/no input ${JSON.stringify(answer)} without opening a popup`, () => {
+      const result = terminal(`ui_toggle '是否安装 Agent？' 0; printf 'RESULT=%s' "$UI_VALUE"`, [answer!]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('[y/N]');
+      expect(result.stdout).toContain(`RESULT=${expected}`);
+    });
+  }
+
+  it('accepts zero to exit and numbered destructive actions without executing them', () => {
+    for (const [answer, action] of [['0', 'cancel'], ['4', 'uninstall']]) {
+      const result = terminal(`select_node_action; printf 'ACTION=%s' "$NODE_ACTION"`, [answer!]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`ACTION=${action}`);
+      expect(result.stdout).toContain('0)');
+    }
+  });
+
+  it('cancels on q or closed terminal input instead of silently using defaults', () => {
+    for (const body of [
+      'ui_menu choose install install 安装 cancel 退出',
+      'ui_input capacity 100GiB',
+      'ui_toggle confirm 1',
+    ]) {
+      for (const answers of [['q'], []]) {
+        const result = terminal(`${body}\nprintf SHOULD_NOT_CONTINUE`, answers);
+        expect(result.status).toBe(1);
+        expect(result.stdout).not.toContain('SHOULD_NOT_CONTINUE');
+        expect(result.stderr).toMatch(/已取消操作|终端输入已关闭/);
+      }
+    }
+  });
+
+  it('runs the actual numbered wizard through storage, components, custom rules and confirmation', () => {
+    const result = terminal(`ip() {
+  case "$*" in
+    'route get 1.1.1.1') printf '1.1.1.1 dev eth0 src 192.0.2.1\\n' ;;
+    '-o link show') printf '1: lo: <LOOPBACK>\\n2: eth0: <UP>\\n3: eth1: <UP>\\n' ;;
+    *) return 1 ;;
+  esac
+}
+select_node_action
+configure_installation
+printf 'RESULT=%s|%s|%s|%s|%s|%s|%s' "$STORAGE_DRIVER" "$STORAGE_SOURCE" "$INSTALL_AGENT" "$INSTALL_FIREWALL" "$ENABLE_FIREWALL_RULES" "$RFW_INTERFACE" "\${RFW_FLAGS[*]}"`, ['1', '4', '/srv/incus', 'n', 'y', 'y', '2 6', '2', 'us,jp', 'n', '2', 'y']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('RESULT=dir|/srv/incus|0|1|1|eth1|--block-http --block-quic --allow-only-countries US,JP');
+    expect(result.stdout).toContain('4 / 4 · 确认安装配置');
+    expect(result.stdout).toContain('跳过，保留现状');
+    expect(result.stdout).toContain('eth0 · 默认出口网卡');
+    expect(result.stdout.match(/存储来源  :/g)).toHaveLength(1);
+    expect(result.stdout).not.toContain('1=是，0=否');
+  });
+
   it('builds custom protocol, GeoIP and logging arguments without applying default protocols', () => {
     const result = run(`rfw_arguments '2 6' whitelist 'us, jp' 1
 printf '%s\\n' "\${RFW_FLAGS[@]}"`);
@@ -35,7 +131,7 @@ printf '%s\\n' "\${RFW_FLAGS[@]}"`);
     expect(result.stdout.trim().split('\n')).toEqual(['--block-http', '--block-quic', '--allow-only-countries', 'US,JP', '--log-port-access']);
   });
 
-  it('matches Incudal defaults in unattended mode', () => {
+  it('uses default firewall rules in unattended mode', () => {
     const result = run(`prepare_install_ui --yes
 INSTALL_FIREWALL=1
 ENABLE_FIREWALL_RULES=1

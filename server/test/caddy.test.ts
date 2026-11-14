@@ -61,6 +61,17 @@ describe('caddy helpers', () => {
     expect(cfg.admin.remote.listen).toBe(':2021');
   });
 
+  it('uses the dedicated admin CA without changing the public site certificate issuer', () => {
+    const caId = 'paledove-admin-0123456789abcdef';
+    const cfg = renderCaddyConfig(
+      { ...admin, caId },
+      [{ domain: 'a.example.com', https: true, upstream: parseUpstream('10.0.0.5:80') }],
+      'ops@example.com',
+    ) as any;
+    expect(cfg.admin.identity.issuers).toEqual([{ module: 'internal', ca: caId }]);
+    expect(cfg.apps.tls.automation.policies[0].issuers).toEqual([{ module: 'acme', email: 'ops@example.com' }]);
+  });
+
   it('converts PEM to base64 DER', () => {
     expect(pemToDer('-----BEGIN CERTIFICATE-----\nAAAA\nBBBB\n-----END CERTIFICATE-----\n')).toBe('AAAABBBB');
   });

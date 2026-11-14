@@ -9,3 +9,5 @@ export * from './payments';
 export * from './products';
 export * from './avatar';
 export * from './ping';
+export * from './night-market';
+export * from './popups';

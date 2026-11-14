@@ -44,6 +44,8 @@ export type DeleteRefundMode = (typeof DELETE_REFUND_MODES)[number];
 
 export const AFF_LOG_TYPES = ['EARN', 'REVOKE', 'WITHDRAW'] as const;
 export type AffLogType = (typeof AFF_LOG_TYPES)[number];
+export const AFF_LOG_STATUSES = ['PENDING', 'SETTLED', 'CANCELED'] as const;
+export type AffLogStatus = (typeof AFF_LOG_STATUSES)[number];
 
 export const BILLING_CYCLES = ['MONTHLY', 'QUARTERLY', 'SEMIANNUAL', 'ANNUAL'] as const;
 export type BillingCycle = (typeof BILLING_CYCLES)[number];

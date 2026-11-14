@@ -60,6 +60,7 @@ model User {
   instances   Instance[]
   orders      Order[]
   invoices    Invoice[]
+  nightMarketPools NightMarketPool[]
   balanceLogs BalanceLog[]
   tasks       Task[]
   redeemed    RedeemCode[]
@@ -618,6 +619,8 @@ model Instance {
   // 计费
   billingCycle BillingCycle
   price        Decimal      @db.Decimal(10, 2)
+  /// 夜市循环优惠的固定续费价；为空时按普通价格或循环优惠码续费
+  nightRenewPrice Decimal?   @db.Decimal(10, 2)
   expiresAt    DateTime
   autoRenew    Boolean      @default(false)
   /// 循环抵扣的优惠码：之后每次续费（含自动续费）都按它减免
@@ -881,6 +884,7 @@ model Invoice {
   status      InvoiceStatus @default(PENDING)
   amount      Decimal       @db.Decimal(10, 2)
   discount    Decimal       @default(0) @db.Decimal(10, 2)
+  discountSource String?
   description String
   payload     Json
   instanceId  Int?
@@ -891,9 +895,11 @@ model Invoice {
   paidAt      DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
+  nightMarketOffer NightMarketOffer?
 
   @@index([userId, status, createdAt])
   @@index([instanceId, status])
+  @@index([status, createdAt])
 }
 
 model Order {
@@ -909,8 +915,10 @@ model Order {
   cycle       BillingCycle
   /// 实付金额（已扣除优惠）
   amount      Decimal      @db.Decimal(10, 2)
-  /// 优惠码减免的金额，原价 = amount + discount
+  /// 优惠减免的金额，原价 = amount + discount
   discount    Decimal      @default(0) @db.Decimal(10, 2)
+  /// 下单时固定优惠来源：COUPON / NIGHT_MARKET；旧数据无法确认时为空
+  discountSource String?
   couponCode  String?
   couponId    Int?
   coupon      Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
@@ -919,8 +927,53 @@ model Order {
   createdAt   DateTime     @default(now())
   couponUsage CouponUsage?
   affLogs     AffLog[]
+  nightMarketOffer NightMarketOffer?
 
   @@index([userId, createdAt])
+}
+
+/// 一期全局奖池快照，后台修改仅影响下一期。
+model NightMarketPeriod {
+  id Int @id @default(autoincrement())
+  number Int @unique @default(1)
+  startsAt DateTime @unique
+  closesAt DateTime
+  refreshAt DateTime
+  /// Legacy release batch, retained for existing snapshots; new periods use number.
+  currentAct Int @default(2)
+  catalog Json
+  /// 本期固定的保底与品质概率；旧期次为空时沿用默认规则。
+  drawRules Json?
+  pools NightMarketPool[]
+}
+
+model NightMarketPool {
+  id Int @id @default(autoincrement())
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodId Int
+  period NightMarketPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  offers NightMarketOffer[]
+  @@unique([userId, periodId])
+}
+
+model NightMarketOffer {
+  id Int @id @default(autoincrement())
+  poolId Int
+  pool NightMarketPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  position Int
+  snapshot Json
+  discountPercent Int
+  originalPrice Decimal @db.Decimal(10, 2)
+  amount Decimal @db.Decimal(10, 2)
+  revealedAt DateTime?
+  purchasedAt DateTime?
+  invoiceId Int? @unique
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  orderId Int? @unique
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  @@unique([poolId, position])
 }
 
 enum BalanceLogType {

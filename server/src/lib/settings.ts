@@ -174,6 +174,10 @@ export const settingDefaults = {
   realname: { enabled: false, appId: '', privateKeyEnc: '', alipayPublicKey: '', gateway: 'https://openapi.alipay.com/gateway.do', bizCode: 'FACE' } as RealnameSettings,
   /** 首页展示的交易市场商品：挂牌 ID 与展示截止时间（ISO） */
   marketFeatured: { listingId: 0, until: '' },
+  popups: {
+    notice: { enabled: false, title: '', content: '', revision: '' },
+    promotion: { enabled: false, title: '', imageUrl: '', planId: null, revision: '' },
+  } as import('../shared/index.ts').PopupSettings,
 };
 
 export type SettingKey = keyof typeof settingDefaults;

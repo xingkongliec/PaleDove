@@ -9,7 +9,12 @@ const fs = require('node:fs'), args = process.argv.slice(1);
 if (args[0] === '-s') {
   const initial = JSON.parse(fs.readFileSync(args.at(-2), 'utf8'));
   const current = JSON.parse(fs.readFileSync(args.at(-1), 'utf8')) || {};
-  console.log(JSON.stringify({ ...current, admin: initial.admin, apps: current.apps || {} }));
+  const ca = args[args.indexOf('--arg') + 2];
+  const apps = current.apps || {};
+  console.log(JSON.stringify({ ...current,
+    admin: { ...initial.admin, identity: { ...initial.admin.identity, issuers: [{module:'internal',ca}] } },
+    apps: { ...apps, pki: { ...apps.pki, certificate_authorities: { ...apps.pki?.certificate_authorities, [ca]: { name:'PaleDove Admin', install_trust:false } } } },
+  }));
 } else if (args[0] === '-n') {
   const result = {};
   for (let i = 1; i < args.length - 1; i += 3) result[args[i + 1]] = args[i] === '--argjson' ? JSON.parse(args[i + 2]) : args[i + 2];
@@ -97,11 +102,11 @@ curl() {
     shift
   done
   case "$url" in
-    */config/) printf '%s' '{"admin":{"listen":"localhost:2019"},"storage":{"module":"file_system","root":"/srv/caddy"},"apps":{"http":{"servers":{"existing":{"listen":[":80"]}}}}}' > "$output" ;;
+    */config/) printf '%s' '{"admin":{"listen":"localhost:2019","identity":{"issuers":[{"module":"internal","ca":"local"}]}},"storage":{"module":"file_system","root":"/srv/caddy"},"apps":{"http":{"servers":{"existing":{"listen":[":80"]}}},"pki":{"certificate_authorities":{"site-ca":{"name":"Existing site CA"}}}}}' > "$output" ;;
     */load)
       [[ "$headers" == *'Cache-Control: must-revalidate'* ]] || die MISSING_FORCED_RELOAD
       printf 'LOAD:' >&2; cat "\${data#@}" >&2; printf '\n' >&2 ;;
-    */pki/ca/local) printf '{"root_certificate":%s}' "$(printf '%s' "$ROOT" | ${shq(process.execPath.replaceAll('\\', '/'))} -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.stringify(s)))')" ;;
+    */pki/ca/paledove-admin-*) printf 'CA:%s\n' "\${url##*/}" >&2; printf '{"root_certificate":%s}' "$(printf '%s' "$ROOT" | ${shq(process.execPath.replaceAll('\\', '/'))} -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.stringify(s)))')" ;;
     */caddy/register) printf 'REGISTER:%s\n' "$ATTEMPTS" >&2; printf '%s' "$RESPONSE" ;;
     *) die "Unexpected URL: $url" ;;
   esac
@@ -119,9 +124,25 @@ ${section}
       admin: { remote: { listen: ':2021' } }, storage: { module: 'file_system', root: '/srv/caddy' },
       apps: { http: { servers: { existing: { listen: [':80'] } } } },
     });
+    const ca = loaded.admin.identity.issuers[0].ca;
+    expect(ca).toMatch(/^paledove-admin-[a-f0-9]{16}$/);
+    expect(loaded.apps.pki.certificate_authorities).toEqual({
+      'site-ca': { name: 'Existing site CA' },
+      [ca]: { name: 'PaleDove Admin', install_trust: false },
+    });
+    expect(result.stderr).toContain(`CA:${ca}`);
     expect(result.stdout).toContain('完成');
     expect(result.stderr).toContain('REGISTER:2');
     expect(result.stderr).not.toContain('certificate has expired');
+  });
+
+  it('uses a new admin issuer on each installation instead of reusing an expired certificate cache', () => {
+    const first = run('');
+    const second = run('');
+    expect(first.status, first.stderr).toBe(0);
+    expect(second.status, second.stderr).toBe(0);
+    const issuer = (output: string) => JSON.parse(output.match(/LOAD:(.*)/)![1]).admin.identity.issuers[0].ca;
+    expect(issuer(first.stderr)).not.toBe(issuer(second.stderr));
   });
 
   it('does not register when the server certificate remains expired', () => {

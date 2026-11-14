@@ -22,7 +22,7 @@ type Message = TicketDetailDTO['messages'][number];
 
 /**
  * 一条消息（聊天式）：自己的回复在右侧、对方在左侧；头像在外侧，名称与时间在气泡上方。
- * 自己的气泡使用主色浅底，对方使用中性底色
+ * 附件在上、文字气泡在下；自己的气泡使用主色浅底，对方使用中性底色
  */
 function MessageItem({ message, admin, first, base }: { message: Message; admin: boolean; first: boolean; base: string }) {
   const t = useT();
@@ -48,14 +48,13 @@ function MessageItem({ message, admin, first, base }: { message: Message; admin:
             {fromNow(message.createdAt)}
           </time>
         </header>
-        <div
-          className={cn(
-            'max-w-full rounded-xl px-3.5 py-2.5',
-            mine ? 'rounded-tr-sm bg-primary-soft' : 'rounded-tl-sm border border-line bg-surface-2/60',
-          )}
-        >
-          <p className="text-[13.5px] leading-relaxed break-words whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">{message.content}</p>
+        <div className={cn('flex max-w-full flex-col gap-2', mine ? 'items-end' : 'items-start')}>
           <Attachments list={message.attachments} base={base} align={mine ? 'end' : 'start'} />
+          {message.content.trim() && (
+            <div className={cn('max-w-full rounded-[14px] px-3.5 py-2.5', mine ? 'bg-primary-soft' : 'border border-line bg-surface-2/60')}>
+              <p className="text-[13.5px] leading-relaxed break-words whitespace-pre-wrap text-fg [overflow-wrap:anywhere]">{message.content}</p>
+            </div>
+          )}
         </div>
       </div>
     </article>

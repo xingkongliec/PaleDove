@@ -35,7 +35,7 @@ export function Orders() {
           className="border-b border-line"
           items={[
             { label: t('billingAdmin.orderPaidTotal'), value: m(list.data?.amountTotal), hint: t('billingAdmin.orderPaidHint') },
-            { label: t('billingAdmin.couponDiscount'), value: m(list.data?.discountTotal), hint: t('billingAdmin.orderDiscountHint') },
+            { label: t('billingAdmin.discountAmount'), value: m(list.data?.discountTotal), hint: t('billingAdmin.orderDiscountHint') },
             { label: t('billingAdmin.refundedOrders'), value: m(list.data?.refundedTotal), hint: t('billingAdmin.refundedOrdersHint') },
             { label: t('billingAdmin.matchingRecords'), value: list.data?.total ?? '—', hint: t('billingAdmin.filteredTotals') },
           ]}
@@ -116,8 +116,8 @@ export function Orders() {
             },
             {
               key: 'discount',
-              header: numericHeader(t('billingAdmin.couponDiscount')),
-              cell: (o) => <DiscountCell discount={o.discount} code={o.couponCode} currency={currency} />,
+              header: numericHeader(t('billingAdmin.discountAmount')),
+              cell: (o) => <DiscountCell discount={o.discount} source={o.discountSource} code={o.couponCode} currency={currency} />,
             },
             {
               key: 'amount',

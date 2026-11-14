@@ -1,5 +1,5 @@
 // 交易市场上架拨测：用户上架实例时，由实例所在宿主机的 Agent 从实例对外的 IPv4 向国内三网目标（与节点测试相同）
-// Ping 一次，结果作为「上架前拨测快照」存在商品上（MarketListing.ping），卖家、买家与管理员都能查看。
+// 执行实时 ICMP，疑似屏蔽时以境外目标为对照并再次检测，结果存入上架快照。
 // 拨测完成后商品才公开（MarketListing.published）；拨测未完成（Agent 不在线、超时、出错）时商品不公开，卖家可以重新拨测或撤销。
 //
 // 测的是买家拿到的那个 IP：
@@ -8,23 +8,27 @@
 //     上游要把地址路由到实例，所以拨测时实例必须在运行：关机的实例先开机，拨测结束后再关机（挂牌期间实例保持关机）。
 // 模拟节点（mock://）直接生成模拟结果。
 import {
+  MARKET_PING_CONTROLS,
   marketPingVerdict,
   PING_ISPS,
   PING_TARGETS,
   pingTarget,
+  pingRegionNeedsIsp,
   type MarketPingDTO,
   type MarketPingReason,
   type MarketPingStatus,
   type MarketPingSummaryDTO,
   type MarketPingVia,
+  type MarketPingVerification,
   type PingResultDTO,
   type PingTarget,
 } from '../shared/index.ts';
+import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { prisma, Prisma, type Instance } from '../lib/prisma.ts';
-import { redis } from '../lib/redis.ts';
+import { redis, withLock } from '../lib/redis.ts';
 import { getSetting } from '../lib/settings.ts';
 import { activePingTargets } from './ping-settings.ts';
-import { deliveredPingTargets } from './agent/ping.ts';
 import { getHostReport } from './agent/agent.ts';
 import { isMockNode } from './gateway.ts';
 import { enqueueTask } from './tasks.ts';
@@ -50,11 +54,17 @@ interface StoredPing {
   via?: MarketPingVia | null;
   results?: PingResultDTO[];
   targets?: PingTarget[];
+  requestId?: string;
+  verification?: MarketPingVerification;
   /** Agent 报错信息（只给管理员排查，不展示给用户） */
   error?: string | null;
 }
 
 interface AgentJob extends InstancePingJob {
+  requestId: string;
+  targets: { id: string; host: string; port: number; mainland: boolean }[];
+  controls: { id: string; host: string; port: number }[];
+  count: number;
   /** 任务过期时间（毫秒） */
   exp: number;
 }
@@ -77,7 +87,8 @@ function readPing(v: Prisma.JsonValue | null | undefined): StoredPing | null {
 
 function summary(p: StoredPing): MarketPingSummaryDTO {
   const results = p.status === 'DONE' ? (p.results ?? []) : [];
-  const v = p.status === 'DONE' ? marketPingVerdict(results, p.targets) : null;
+  const v = p.status === 'DONE' ? marketPingVerdict(results, p.targets, p.method === 'icmp' && p.via !== 'mock' ? p.verification : undefined) : null;
+  if (v && p.method !== 'icmp') v.verdict = 'UNKNOWN';
   // 三网最快：每个运营商延迟最低的目标
   const fastest: MarketPingSummaryDTO['fastest'] = [];
   for (const isp of ['CT', 'CM', 'CU'] as const) {
@@ -124,8 +135,8 @@ export function pingDetail(v: Prisma.JsonValue | null | undefined, type: Instanc
 
 /** 保存拨测状态；拨测完成时公开商品 */
 async function save(listingId: number, ping: StoredPing): Promise<void> {
-  await prisma.marketListing.update({
-    where: { id: listingId },
+  await prisma.marketListing.updateMany({
+    where: { id: listingId, status: 'ACTIVE' },
     data: { ping: ping as unknown as Prisma.InputJsonValue, ...(ping.status === 'DONE' ? { published: true } : {}) },
   });
 }
@@ -168,8 +179,9 @@ async function startPing(listingId: number, inst: PingInstance, userId: number):
   };
   const dedicated = isDedicated(inst.type);
   // 没有 IPv4：纯 IPv6 宿主机上的 NAT 实例，或独立 IPv4 实例没有分配地址
-  if ((!dedicated && inst.node.networkMode === 'IPV6_ONLY') || (dedicated && !inst.ipAddress)) return fail('noIpv4');
-  const targets = activePingTargets(await getSetting('ping'));
+  if ((!dedicated && inst.node.networkMode === 'IPV6_ONLY') || isIP(agentJob(listingId, inst).ip) !== 4) return fail('noIpv4');
+  const settings = await getSetting('ping');
+  const targets = activePingTargets(settings);
   if (!targets.length) return fail('error');
 
   if (isMockNode(inst.node)) {
@@ -184,42 +196,69 @@ async function startPing(listingId: number, inst: PingInstance, userId: number):
   }
 
   const report = await getHostReport(inst.node.id);
-  if (!report?.online || !report.capabilities?.includes('listing-ping')) return fail('agent');
+  if (!report?.online || !report.capabilities?.includes('listing-ping-v2')) return fail('agent');
 
-  await save(listingId, { status: 'PENDING', requestedAt: now });
-  void runFlow(listingId, inst, userId);
+  const requestId = randomUUID();
+  await save(listingId, { status: 'PENDING', requestedAt: now, requestId, targets });
+  void runFlow(listingId, inst, userId, requestId, targets, Math.min(4, Math.max(2, settings.count))).catch(async e => {
+    const cur = await current(listingId);
+    if (cur?.requestId === requestId && cur.status === 'PENDING') await save(listingId, { ...cur, status: 'FAILED', reason: 'error', error: String(e).slice(0, 300) });
+  });
   return { deferStop: dedicated };
 }
 
 /** 拨测流程：（独立 IPv4 关机时先开机）下发任务 → 等待结果 → （独立 IPv4）关机 */
-async function runFlow(listingId: number, inst: PingInstance, userId: number): Promise<void> {
-  if ((await redis.set(FLOW_KEY(listingId), '1', 'PX', START_TIMEOUT_MS + RESULT_TIMEOUT_MS + 60_000, 'NX')) !== 'OK') return;
+async function runFlow(listingId: number, inst: PingInstance, userId: number, requestId: string, targets: PingTarget[], count: number): Promise<void> {
+  let locked = false;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    locked = (await redis.set(FLOW_KEY(listingId), requestId, 'PX', START_TIMEOUT_MS + RESULT_TIMEOUT_MS + 60_000, 'NX')) === 'OK';
+    if (locked) break;
+    await sleep(POLL_MS);
+  }
+  if (!locked) {
+    const p = await current(listingId);
+    if (p?.requestId === requestId) await save(listingId, { ...p, status: 'FAILED', reason: 'timeout' });
+    return;
+  }
   const dedicated = isDedicated(inst.type);
-  const requestedAt = (await current(listingId))?.requestedAt ?? new Date().toISOString();
+  const pending = await current(listingId);
+  if (!pending || pending.requestId !== requestId || pending.status !== 'PENDING') {
+    await redis.del(FLOW_KEY(listingId));
+    return;
+  }
   try {
     if (dedicated && inst.status !== 'RUNNING') {
       // 上游只会把地址路由到运行中的实例，独立 IPv4 关机时先开机
       await enqueueTask({ instanceId: inst.id, type: 'START', userId, exclusive: false });
       if (!(await waitRunning(inst.id))) {
-        await save(listingId, { status: 'FAILED', reason: 'start', requestedAt });
+        await save(listingId, { ...pending, status: 'FAILED', reason: 'start' });
         return;
       }
     }
-    const job: AgentJob = { ...agentJob(listingId, inst), exp: Date.now() + RESULT_TIMEOUT_MS };
+    const active = await prisma.marketListing.findUnique({ where: { id: listingId }, select: { status: true } });
+    if (active?.status !== 'ACTIVE') return;
+    const job: AgentJob = { ...agentJob(listingId, inst), requestId, targets: targets.map(({ id, host, port, province }) => ({ id, host, port, mainland: pingRegionNeedsIsp(province) })), controls: [...MARKET_PING_CONTROLS], count, exp: Date.now() + RESULT_TIMEOUT_MS };
     await redis.hset(JOBS_KEY(inst.node.id), String(listingId), JSON.stringify(job));
     const deadline = Date.now() + RESULT_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_MS);
       const p = await current(listingId);
-      if (!p || p.status !== 'PENDING') return;
+      if (!p || p.status !== 'PENDING' || p.requestId !== requestId) return;
+      if ((await prisma.marketListing.findUnique({ where: { id: listingId }, select: { status: true } }))?.status !== 'ACTIVE') return;
     }
     await redis.hdel(JOBS_KEY(inst.node.id), String(listingId));
-    await save(listingId, { status: 'FAILED', reason: 'timeout', requestedAt });
+    await save(listingId, { ...pending, status: 'FAILED', reason: 'timeout' });
   } catch (e) {
-    await save(listingId, { status: 'FAILED', reason: 'error', requestedAt, error: e instanceof Error ? e.message.slice(0, 300) : String(e) }).catch(() => undefined);
+    const cur = await current(listingId).catch(() => null);
+    if (cur?.requestId === requestId && cur.status === 'PENDING') await save(listingId, { ...pending, status: 'FAILED', reason: 'error', error: e instanceof Error ? e.message.slice(0, 300) : String(e) }).catch(() => undefined);
   } finally {
-    if (dedicated) await stopIfListed(listingId, inst.id, userId);
-    await redis.del(FLOW_KEY(listingId)).catch(() => undefined);
+    try {
+      const raw = (await redis.hgetall(JOBS_KEY(inst.node.id)))[String(listingId)];
+      if (raw && (JSON.parse(raw) as AgentJob).requestId === requestId) await redis.hdel(JOBS_KEY(inst.node.id), String(listingId)).catch(() => undefined);
+      if (dedicated && (await current(listingId))?.requestId === requestId) await stopIfListed(listingId, inst.id, userId);
+    } finally {
+      await redis.del(FLOW_KEY(listingId)).catch(() => undefined);
+    }
   }
 }
 
@@ -253,15 +292,17 @@ export async function recoverListingPings(): Promise<void> {
     if (p?.status !== 'PENDING' || typeof p.requestedAt !== 'string') continue;
     const requestedAt = p.requestedAt;
     void (async () => {
-      if ((await redis.set(FLOW_KEY(row.id), '1', 'PX', RESULT_TIMEOUT_MS + 60_000, 'NX')) !== 'OK') return;
+      if ((await redis.set(FLOW_KEY(row.id), p.requestId ?? 'legacy', 'PX', START_TIMEOUT_MS + RESULT_TIMEOUT_MS + 60_000, 'NX')) !== 'OK') return;
       try {
         const deadline = Date.parse(requestedAt) + START_TIMEOUT_MS + RESULT_TIMEOUT_MS;
         while (Date.now() < deadline) {
           const cur = await current(row.id);
-          if (!cur || cur.status !== 'PENDING') break;
+          if (!cur || cur.status !== 'PENDING' || cur.requestId !== p.requestId || cur.requestedAt !== requestedAt) break;
           await sleep(POLL_MS * 2);
         }
-        if ((await current(row.id))?.status === 'PENDING') await save(row.id, { status: 'FAILED', reason: 'timeout', requestedAt });
+        const cur = await current(row.id);
+        if (!cur || cur.requestId !== p.requestId || cur.requestedAt !== requestedAt) return;
+        if (cur.status === 'PENDING') await save(row.id, { ...cur, status: 'FAILED', reason: 'timeout' });
         if (isDedicated(row.instance.type)) await stopIfListed(row.id, row.instance.id, row.sellerId);
       } finally {
         await redis.del(FLOW_KEY(row.id)).catch(() => undefined);
@@ -288,6 +329,7 @@ export async function agentListingJobs(nodeId: number): Promise<Omit<AgentJob, '
       continue;
     }
     const { exp: _exp, ...rest } = job;
+    if (!job.requestId) continue;
     out.push(rest);
   }
   return out.slice(0, 5);
@@ -295,34 +337,58 @@ export async function agentListingJobs(nodeId: number): Promise<Omit<AgentJob, '
 
 export interface AgentListingPingInput {
   id: number;
+  requestId?: string;
+  ip?: string;
   method?: 'icmp' | 'tcp';
   via?: 'local' | 'default' | 'spoof' | 'spoof-l2';
-  results?: PingResultDTO[];
+  results?: (PingResultDTO & { error?: string })[];
+  verification?: {
+    results: (PingResultDTO & { error?: string })[];
+    controls: (PingResultDTO & { error?: string })[];
+    confirmationControls: (PingResultDTO & { error?: string })[];
+  };
   error?: string;
 }
 
 /** 保存 Agent 回传的拨测结果；不是这台宿主机的任务时返回 false */
 export async function saveAgentListingPing(nodeId: number, input: AgentListingPingInput): Promise<boolean> {
-  // 删除成功才说明是这台宿主机的任务（同时避免重复保存）
-  if ((await redis.hdel(JOBS_KEY(nodeId), String(input.id))) === 0) return false;
-  const cur = await current(input.id);
-  if (!cur || cur.status !== 'PENDING') return false;
-  if (input.error || !input.results || !input.method) {
-    await save(input.id, { status: 'FAILED', reason: 'error', requestedAt: cur.requestedAt, error: (input.error ?? 'empty result').slice(0, 300) });
+  return withLock(`market-ping-result:${input.id}`, 15_000, async () => {
+    const raw = (await redis.hgetall(JOBS_KEY(nodeId)))[String(input.id)];
+    if (!raw) return false;
+    const job = JSON.parse(raw) as AgentJob;
+    if (!job.requestId || input.requestId !== job.requestId || job.exp <= Date.now()) return false;
+    const cur = await current(input.id);
+    const listing = await prisma.marketListing.findUnique({ where: { id: input.id }, include: { instance: { include: { node: true, ipAddress: true } } } });
+    if (!cur || cur.status !== 'PENDING' || cur.requestId !== job.requestId || !listing || listing.status !== 'ACTIVE' || listing.instance.nodeId !== nodeId) return false;
+    const source = agentJob(input.id, listing.instance);
+    const validSource = input.ip === job.ip && source.ip === job.ip && source.kind === job.kind
+      && source.mac === job.mac && source.gateway === job.gateway && source.bridge === job.bridge
+      && (job.kind === 'nat' ? ['local', 'default'].includes(input.via ?? '') : listing.instance.status === 'RUNNING' && (job.bridge ? ['local', 'spoof-l2'] : ['local', 'spoof']).includes(input.via ?? ''));
+    const normalize = (rows: (PingResultDTO & { error?: string })[], expected: { id: string }[]) => {
+      const normalized = new Map<string, PingResultDTO | null>();
+      for (const r of rows) {
+        if (!expected.some(t => t.id === r.id)) continue;
+        const valid = !normalized.has(r.id) && !r.error && (!r.targetIp || isIP(r.targetIp) === 4) && Number.isFinite(r.loss) && r.loss >= 0 && r.loss <= 100
+          && (r.latency === null ? r.loss === 100 : Number.isFinite(r.latency) && r.latency >= 0 && r.loss < 100);
+        normalized.set(r.id, valid ? { id: r.id, latency: r.latency === null ? null : Math.round(r.latency * 10) / 10, loss: r.loss, ...(r.targetIp ? { targetIp: r.targetIp } : {}) } : null);
+      }
+      return [...normalized.values()].filter((r): r is PingResultDTO => r !== null);
+    };
+    const results = normalize(input.results ?? [], job.targets);
+    await redis.hdel(JOBS_KEY(nodeId), String(input.id));
+    if (input.error || input.method !== 'icmp' || !validSource || results.length !== job.targets.length) {
+      await save(input.id, { ...cur, status: 'FAILED', reason: 'error', error: (input.error ?? 'incomplete ICMP results or invalid source').slice(0, 300) });
+      return true;
+    }
+    const verification = input.verification ? {
+      results: normalize(input.verification.results, job.targets),
+      controls: normalize(input.verification.controls, job.controls),
+      confirmationControls: normalize(input.verification.confirmationControls, job.controls),
+    } : undefined;
+    const merged = results.map(r => verification?.results.find(next => next.id === r.id && next.latency !== null) ?? r);
+    await save(input.id, { ...cur, status: 'DONE', testedAt: new Date().toISOString(), method: 'icmp', via: input.via, results: merged, verification });
     return true;
-  }
-  const targets = await deliveredPingTargets(nodeId);
-  const valid = new Set(targets.map((t) => t.id));
-  const results = input.results
-    .filter((r) => valid.delete(r.id))
-    .map((r) => ({ id: r.id, latency: r.latency === null ? null : Math.round(r.latency * 10) / 10, loss: Math.round(r.loss) }));
-  // 没有任何有效目标的结果：按拨测出错处理，而不是判成 IP 异常
-  if (results.length === 0) {
-    await save(input.id, { status: 'FAILED', reason: 'error', requestedAt: cur.requestedAt, error: 'no valid results' });
-    return true;
-  }
-  await save(input.id, { status: 'DONE', requestedAt: cur.requestedAt, testedAt: new Date().toISOString(), method: input.method, via: input.via ?? null, results, targets });
-  return true;
+  });
 }
 
 /** 模拟节点的拨测结果：全部可达，延迟按运营商与省份随机 */
@@ -330,7 +396,7 @@ function mockResults(targets: PingTarget[] = PING_TARGETS): PingResultDTO[] {
   const base = 120 + Math.random() * 60;
   return targets.map((t) => ({
     id: t.id,
-    latency: Math.round((base + PING_ISPS.indexOf(t.isp) * 8 + Math.random() * 40) * 10) / 10,
+    latency: Math.round((base + (t.isp ? PING_ISPS.indexOf(t.isp) * 8 : 0) + Math.random() * 40) * 10) / 10,
     loss: 0,
   }));
 }

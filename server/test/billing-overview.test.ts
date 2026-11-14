@@ -11,6 +11,7 @@ describe('admin billing overview and records', () => {
   let db: typeof import('../src/lib/prisma.ts').prisma;
   let directory: string;
   let adminCookie: string;
+  let userCookie: string;
   const users: number[] = [];
   const products: number[] = [];
   const createUser = async (name: string) => {
@@ -57,6 +58,8 @@ describe('admin billing overview and records', () => {
     app = await (await import('../src/app.ts')).buildApp();
     const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { account: 'bill-admin', password }, headers: { 'x-requested-with': 'XMLHttpRequest' } });
     adminCookie = res.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+    const loginUser = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { account: 'bill-user', password }, headers: { 'x-requested-with': 'XMLHttpRequest' } });
+    userCookie = loginUser.cookies.map(c => `${c.name}=${c.value}`).join('; ');
   }, 90_000);
 
   afterAll(async () => {
@@ -149,7 +152,8 @@ describe('admin billing overview and records', () => {
     expect(Number(o.income.total) - Number(before.income.total)).toBe(242);
     expect(Number(o.recharge.total.amount) - Number(before.recharge.total.amount)).toBe(365);
     expect(o.monthOrders).toEqual({ amount: '75.00', count: 2, newCount: 1, renewCount: 1, discount: '15.00', discountedCount: 1 });
-    expect(o.coupons).toEqual({ amount: '20.00', count: 2 });
+    expect(o.coupons).toEqual({ amount: '0.00', count: 0 });
+    expect(o.discounts.other).toEqual({ amount: '20.00', count: 2 });
   });
 
   it('reports an empty comparison baseline and negative monthly income without inventing a percentage', async () => {
@@ -338,5 +342,67 @@ describe('admin billing overview and records', () => {
       expect(item.order).toBeUndefined();
       expect(item.payment).toBeUndefined();
     }
+  });
+
+  it('lists all invoice states, filters across users and dates, and totals paid discounts independently of pagination', async () => {
+    const user = await createUser('invoice-owner');
+    const other = await createUser('invoice-other');
+    const data = [
+      { no: 'INV-PENDING-TEST', userId: user.id, status: 'PENDING', amount: '20.00', discount: '10.00', discountSource: 'NIGHT_MARKET', type: 'PURCHASE' },
+      { no: 'INV-PAID-NIGHT', userId: user.id, status: 'PAID', amount: '0.10', discount: '0.20', discountSource: 'NIGHT_MARKET', type: 'RENEW' },
+      { no: 'INV-PAID-COUPON', userId: user.id, status: 'PAID', amount: '12.34', discount: '2.55', discountSource: 'COUPON', type: 'PURCHASE' },
+      { no: 'INV-CANCELED-TEST', userId: user.id, status: 'CANCELED', amount: '10.00', discount: '10.00', discountSource: 'NIGHT_MARKET', type: 'PURCHASE' },
+      { no: 'INV-EXPIRED-TEST', userId: user.id, status: 'EXPIRED', amount: '11.00', discount: '10.00', discountSource: 'NIGHT_MARKET', type: 'PURCHASE' },
+      { no: 'INV-PROCESSING-TEST', userId: user.id, status: 'PROCESSING', amount: '13.00', discount: '10.00', discountSource: 'NIGHT_MARKET', type: 'PURCHASE' },
+      { no: 'INV-PAID-OTHER', userId: other.id, status: 'PAID', amount: '99.00', discount: '0.00', discountSource: null, type: 'TRAFFIC_RESET' },
+    ];
+    await db.invoice.createMany({ data: data.map(row => ({ ...row, status: row.status as never, type: row.type as never, payload: {}, description: 'Invoice test', createdAt: new Date('2026-10-01T08:00:00Z') })) });
+    for (const page of [1, 2]) {
+      const result = await get(`/api/admin/billing/invoices?q=invoice-owner&pageSize=2&page=${page}`);
+      expect(result.statusCode, result.body).toBe(200);
+      expect(result.json()).toMatchObject({ total: 6, pending: { amount: '20.00', count: 1 }, paid: { amount: '12.44', count: 2 }, discounts: { total: '2.75', nightMarket: '0.20', coupon: '2.55', other: '0.00' } });
+      expect(result.json().items).toHaveLength(2);
+      expect(result.json().items.every((row: { user: { id: number } }) => row.user.id === user.id)).toBe(true);
+    }
+    expect((await get('/api/admin/billing/invoices?q=invoice-owner&status=PENDING')).json()).toMatchObject({ total: 1, paid: { amount: '0.00', count: 0 }, discounts: { total: '0.00', nightMarket: '0.00' } });
+    expect((await get('/api/admin/billing/invoices?q=invoice-owner&type=RENEW')).json()).toMatchObject({ total: 1, discounts: { nightMarket: '0.20' } });
+    expect((await get('/api/admin/billing/invoices?q=INVOICE-OTHER%40example.com')).json().total).toBe(1);
+    expect((await get('/api/admin/billing/invoices?q=invoice-owner&startAt=2026-10-01T08:00:00Z&endAt=2026-10-01T08:00:01Z')).json().total).toBe(6);
+    expect((await get('/api/admin/billing/invoices?q=invoice-owner&endAt=2026-10-01T08:00:00Z')).json().total).toBe(0);
+    for (const query of ['status=INVALID', 'type=INVALID', 'page=0', 'startAt=bad', 'startAt=2026-11-02T00:00:00Z&endAt=2026-11-01T00:00:00Z']) {
+      expect((await get(`/api/admin/billing/invoices?${query}`)).statusCode).toBe(400);
+    }
+  });
+
+  it('protects admin invoice details and only returns safe invoice and customer information', async () => {
+    const user = await createUser('invoice-detail');
+    const invoice = await db.invoice.create({ data: { no: 'INV-SAFE-DETAIL', userId: user.id, type: 'RENEW', amount: 15, discount: 5, discountSource: 'NIGHT_MARKET', description: 'Renewal', payload: { instanceId: 123, periods: 1, passwordEnc: 'private-encrypted-value', sshKeys: ['private-ssh-key'], nodeId: 456 } } });
+    const response = await get(`/api/admin/billing/invoices/${invoice.id}`);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({ id: invoice.id, discountSource: 'NIGHT_MARKET', discount: '5.00', couponCode: null, purchaseConfig: null, user: { id: user.id, username: user.username, email: user.email } });
+    for (const field of ['payload', 'passwordEnc', 'passwordHash', 'private-encrypted-value', 'sshKeys', 'private-ssh-key']) expect(response.body).not.toContain(field);
+    expect((await get('/api/admin/billing/invoices/2147483647')).statusCode).toBe(404);
+    expect((await get('/api/admin/billing/invoices/nope')).statusCode).toBe(400);
+    for (const url of ['/api/admin/billing/invoices', `/api/admin/billing/invoices/${invoice.id}`]) {
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'GET', url, headers: { cookie: userCookie } })).statusCode).toBe(403);
+    }
+    expect((await app.inject({ method: 'GET', url: `/api/invoices/${invoice.id}`, headers: { cookie: userCookie } })).statusCode).toBe(404);
+  });
+
+  it('separates Night Market, coupon and other discounts in orders, activity and revenue reports', async () => {
+    const user = await createUser('discount-sources');
+    for (const [suffix, source, discount, code] of [['NIGHT', 'NIGHT_MARKET', 7.4, null], ['COUPON', 'COUPON', 3, 'SAVE'], ['OTHER', null, 2, null]] as const) {
+      const order = await db.order.create({ data: { no: `DISCOUNT-${suffix}`, userId: user.id, type: suffix === 'NIGHT' ? 'RENEW' : 'NEW', cycle: 'MONTHLY', amount: 10, discount, discountSource: source, couponCode: code } });
+      await db.balanceLog.create({ data: { userId: user.id, type: 'PURCHASE', amount: -10, balanceAfter: 0, description: `消费，订单 ${order.no}` } });
+    }
+    await db.order.create({ data: { no: 'DISCOUNT-REFUNDED', userId: user.id, type: 'NEW', cycle: 'MONTHLY', amount: 10, discount: 50, discountSource: 'NIGHT_MARKET', status: 'REFUNDED' } });
+    const overview = (await get('/api/admin/billing/overview')).json();
+    expect(overview.discounts).toEqual({ total: { amount: '12.40', count: 3 }, nightMarket: { amount: '7.40', count: 1 }, coupon: { amount: '3.00', count: 1 }, other: { amount: '2.00', count: 1 } });
+    expect(overview.monthOrders.discount).toBe('12.40');
+    const orders = (await get('/api/admin/orders?q=discount-sources&status=PAID')).json();
+    expect(orders.items.map((row: { discountSource: string }) => row.discountSource).sort()).toEqual(['COUPON', 'NIGHT_MARKET', 'OTHER']);
+    const logs = (await get('/api/admin/billing/records?kind=all&q=discount-sources')).json();
+    expect(logs.items.map((row: { order: { discountSource: string } }) => row.order.discountSource).sort()).toEqual(['COUPON', 'NIGHT_MARKET', 'OTHER']);
   });
 });

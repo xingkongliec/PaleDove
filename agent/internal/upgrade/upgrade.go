@@ -1,7 +1,7 @@
 // Package upgrade 按面板下发的升级指令自动升级 Agent。
 package upgrade
 
-// 自动升级（参考 incudal）：面板在上报回复里下发升级指令（版本、下载地址、sha256、大小），回复带签名。
+// 自动升级：面板在上报回复里下发升级指令（版本、下载地址、sha256、大小），回复带签名。
 // Agent 只接受签名有效、与 PANEL_URL 同源的 /api/agent/binary/ 地址；随机延迟后下载，校验大小与 sha256，
 // 写到同目录临时文件，备份旧版本（.bak）后原子替换，然后退出进程，由 systemd（Restart=always）以新版本重新启动。
 // 升级失败的版本一小时内不再重试。

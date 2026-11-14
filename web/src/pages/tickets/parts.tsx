@@ -150,37 +150,41 @@ export function Attachments({ list, base, align = 'start' }: { list: TicketAttac
   if (!list.length) return null;
   const url = (file: TicketAttachmentDTO) => `/api${base}/attachments/${file.id}`;
   const images = list.filter((f) => IMAGE_TYPES.includes(f.mimeType));
+  const files = list.filter((f) => !IMAGE_TYPES.includes(f.mimeType));
   return (
-    <div className="mt-2.5 space-y-2">
+    <div className={cn('flex max-w-full flex-col gap-2', align === 'end' ? 'items-end' : 'items-start')}>
       {images.length > 0 && (
-        <div className={cn('flex flex-wrap gap-2', align === 'end' && 'justify-end')}>
+        <div className={cn('flex max-w-full flex-wrap gap-2', align === 'end' && 'justify-end')}>
           {images.map((file) => (
             <button
               key={file.id}
               type="button"
               aria-label={t('ticket.preview', { name: file.fileName })}
+              title={file.fileName}
               onClick={() => setPreview(file)}
-              className="overflow-hidden rounded-md border border-line bg-surface-2 outline-none transition-[border-color] hover:border-line-strong focus-visible:ring-3 focus-visible:ring-ring"
+              className="min-w-0 max-w-72 overflow-hidden rounded-[14px] border border-line bg-surface-2 outline-none transition-[border-color] hover:border-line-strong focus-visible:ring-3 focus-visible:ring-ring"
             >
-              <img src={url(file)} alt={file.fileName} loading="lazy" className="h-24 max-w-52 object-cover" />
+              <img src={url(file)} alt={file.fileName} loading="lazy" className="block h-auto max-h-48 w-auto max-w-full object-contain" />
             </button>
           ))}
         </div>
       )}
-      <div className={cn('flex flex-wrap gap-1.5', align === 'end' && 'justify-end')}>
-        {list.map((file) => (
-          <a
-            key={file.id}
-            href={`${url(file)}?download=1`}
-            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg-2 transition-colors hover:border-line-strong hover:text-fg"
-          >
-            <Paperclip className="size-3.5 shrink-0 text-fg-3" />
-            <span className="max-w-48 truncate">{file.fileName}</span>
-            <span className="shrink-0 text-fg-4">{formatBytes(file.size)}</span>
-            <Download className="size-3.5 shrink-0 text-fg-3" />
-          </a>
-        ))}
-      </div>
+      {files.length > 0 && (
+        <div className={cn('flex max-w-full flex-wrap gap-1.5', align === 'end' && 'justify-end')}>
+          {files.map((file) => (
+            <a
+              key={file.id}
+              href={`${url(file)}?download=1`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1 text-xs text-fg-2 transition-colors hover:border-line-strong hover:text-fg"
+            >
+              <Paperclip className="size-3.5 shrink-0 text-fg-3" />
+              <span className="max-w-48 truncate">{file.fileName}</span>
+              <span className="shrink-0 text-fg-4">{formatBytes(file.size)}</span>
+              <Download className="size-3.5 shrink-0 text-fg-3" />
+            </a>
+          ))}
+        </div>
+      )}
       <Modal open={!!preview} onOpenChange={(open) => !open && setPreview(null)} title={preview?.fileName} size="xl">
         {preview && (
           <div className="space-y-3">

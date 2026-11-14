@@ -117,6 +117,7 @@ func measureIPv4(ctx context.Context, target pingTarget, count int, plan listing
 		out.Error = "无法解析检测目标"
 		return out
 	}
+	out.TargetIP = ips[0].String()
 	var rtts []time.Duration
 	if plan.spoof != nil {
 		rtts, err = plan.spoof.PingResult(ips[0], count)
@@ -131,5 +132,7 @@ func measureIPv4(ctx context.Context, target pingTarget, count int, plan listing
 		out.Error = err.Error()
 		return out
 	}
-	return summarize(target.ID, rtts, count)
+	result := summarize(target.ID, rtts, count)
+	result.TargetIP = out.TargetIP
+	return result
 }

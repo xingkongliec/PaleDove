@@ -6,6 +6,13 @@ export interface ProductNodeOption {
 
 export const DEFAULT_NODE_OPTION: ProductNodeOption = { storagePool: null, trafficMultiplier: 1 };
 
+/** 与数据库 Int 字段的上限保持一致。 */
+export const PLAN_STOCK_MAX = 2_147_483_647;
+
+export type PlanStockChange =
+  | { operation: 'adjust'; delta: number }
+  | { operation: 'set'; stock: number | null; expectedStock: number | null };
+
 /** 流量倍率的取值范围 */
 export const TRAFFIC_MULTIPLIER_MIN = 0.1;
 export const TRAFFIC_MULTIPLIER_MAX = 100;
@@ -94,7 +101,7 @@ export const PROCESS_LIMIT_MIN = 64;
  */
 export const HOST_AGENT_VERSION = 3;
 /** 面板附带的 Agent 发布版本（构建 agent 时写入二进制），用于显示「最新 / 可更新」 */
-export const HOST_AGENT_RELEASE = '0.8.0';
+export const HOST_AGENT_RELEASE = '0.8.2';
 
 /** 比较 Agent 发布版本；开发版或非法版本返回 null，避免误判升级或降级。 */
 export function compareHostAgentReleases(a: string, b: string): number | null {

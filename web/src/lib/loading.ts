@@ -1,5 +1,5 @@
-// 全局加载状态：页面代码下载、页面首次取数时计数，顶部进度条据此显示
-import { useIsFetching } from '@tanstack/react-query';
+// 全局加载状态：页面代码、首次取数与主动提交共用顶部进度条。
+import { useIsFetching, useIsMutating } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 
 let count = 0;
@@ -36,7 +36,8 @@ export function useLoadingWhileMounted() {
 }
 
 /**
- * 是否有加载在进行：页面代码下载（Suspense 占位）、页面首次取数（还没有数据的查询）。
+ * 是否有加载在进行：页面代码、首次取数，以及默认开启 progress 的主动提交。
+ * 个别无需展示进度的提交可通过 meta.progress = false 关闭。
  * 后台刷新、轮询不算，不打扰。
  */
 export function useGlobalLoading() {
@@ -48,5 +49,6 @@ export function useGlobalLoading() {
     () => count > 0,
   );
   const firstFetch = useIsFetching({ predicate: (q) => q.state.data === undefined && q.state.status !== 'error' });
-  return pending || firstFetch > 0;
+  const submissions = useIsMutating({ predicate: (m) => m.options.meta?.progress === true });
+  return pending || firstFetch > 0 || submissions > 0;
 }

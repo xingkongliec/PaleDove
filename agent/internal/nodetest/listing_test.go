@@ -112,14 +112,15 @@ func TestListingPlan(t *testing.T) {
 	}
 }
 
-// 完整流程：拉取目标、测量、回传结果；同一任务只执行一次
+// 完整流程：测量任务中固定的目标并回传，同一任务只执行一次
 func TestListingRun(t *testing.T) {
 	var mu sync.Mutex
 	var posted []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/agent/nodes/ping-targets":
-			w.Write([]byte(`{"hash":"h","count":2,"targets":[{"id":"bj-ct","host":"a","port":80},{"id":"sh-cm","host":"b","port":80}]}`))
+			t.Error("listing must use the pinned targets without fetching a different list")
+			w.WriteHeader(http.StatusInternalServerError)
 		case "/api/agent/nodes/listing-ping":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -140,7 +141,9 @@ func TestListingRun(t *testing.T) {
 		}
 		return summarize(tg.ID, []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}, count)
 	}
-	job := ListingJob{ID: 42, IP: "203.0.113.1", Kind: "nat"}
+	job := ListingJob{ID: 42, IP: "203.0.113.1", Kind: "nat", RequestID: "first", Count: 2,
+		Targets:  []pingTarget{{ID: "bj-ct", Host: "a", Port: 80, Mainland: true}, {ID: "sh-cm", Host: "b", Port: 80, Mainland: true}},
+		Controls: []pingTarget{{ID: "c1"}, {ID: "c2"}, {ID: "c3"}}}
 	r.MaybeRun(context.Background(), c, []ListingJob{job})
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -163,11 +166,125 @@ func TestListingRun(t *testing.T) {
 	}
 	body := posted[0]
 	results, _ := body["results"].([]any)
-	if body["id"].(float64) != 42 || body["method"] != "icmp" || body["via"] != viaLocal || len(results) != 2 {
+	if body["id"].(float64) != 42 || body["requestId"] != "first" || body["ip"] != job.IP || body["method"] != "icmp" || body["via"] != viaLocal || len(results) != 2 {
 		t.Fatalf("body %+v", body)
 	}
 	first := results[0].(map[string]any)
 	if first["latency"].(float64) != 15 || first["loss"].(float64) != 0 {
 		t.Fatalf("result %+v", first)
+	}
+}
+
+func listingTestJob() ListingJob {
+	return ListingJob{ID: 42, IP: "203.0.113.1", Kind: "nat", RequestID: "test", Count: 2,
+		Targets:  []pingTarget{{ID: "bj-ct", Host: "a", Mainland: true}, {ID: "sh-cm", Host: "b", Mainland: true}},
+		Controls: []pingTarget{{ID: "control1"}, {ID: "control2"}, {ID: "control3"}}}
+}
+
+func TestListingVerifiesMainlandFailuresTwiceUsingSameSource(t *testing.T) {
+	r := NewListingRunner()
+	r.isLocal = func(net.IP) bool { return true }
+	r.icmpOK = func() bool { return true }
+	var mu sync.Mutex
+	calls := map[string]int{}
+	r.measure = func(_ context.Context, target pingTarget, count int, plan listingPlan) pingResult {
+		if count != 2 || !plan.icmp || !plan.src.Equal(net.ParseIP("203.0.113.1")) {
+			t.Errorf("wrong source or method: %+v", plan)
+		}
+		mu.Lock()
+		calls[target.ID]++
+		mu.Unlock()
+		if target.Mainland {
+			return summarize(target.ID, nil, count)
+		}
+		return summarize(target.ID, []time.Duration{10 * time.Millisecond, 20 * time.Millisecond}, count)
+	}
+	method, via, results, verification, err := r.test(context.Background(), nil, listingTestJob())
+	if err != nil || method != "icmp" || via != viaLocal || len(results) != 2 || verification == nil || len(verification.Results) != 2 || len(verification.Controls) != 3 || len(verification.ConfirmationControls) != 3 {
+		t.Fatalf("method=%s via=%s verification=%+v err=%v", method, via, verification, err)
+	}
+	for id, count := range calls {
+		if count != 2 {
+			t.Errorf("target %s tested %d times", id, count)
+		}
+	}
+}
+
+func TestListingDoesNotSubstituteTCPOrTreatLocalErrorsAsTimeouts(t *testing.T) {
+	r := NewListingRunner()
+	r.isLocal = func(net.IP) bool { return true }
+	r.icmpOK = func() bool { return false }
+	r.measure = func(context.Context, pingTarget, int, listingPlan) pingResult {
+		t.Error("must not measure TCP")
+		return pingResult{}
+	}
+	if _, _, _, _, err := r.test(context.Background(), nil, listingTestJob()); err == nil {
+		t.Fatal("missing ICMP privileges should fail")
+	}
+	r.icmpOK = func() bool { return true }
+	r.measure = func(_ context.Context, target pingTarget, _ int, _ listingPlan) pingResult {
+		return pingResult{ID: target.ID, Error: "DNS or send failure", Loss: 100}
+	}
+	if _, _, _, _, err := r.test(context.Background(), nil, listingTestJob()); err == nil {
+		t.Fatal("local errors must not become target timeouts")
+	}
+}
+
+func TestListingRetestUsesNewAttemptAndRetriesFailedUploads(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		posts++
+		current := posts
+		mu.Unlock()
+		if current == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	r := NewListingRunner()
+	r.isLocal = func(net.IP) bool { return true }
+	r.icmpOK = func() bool { return true }
+	r.measure = func(_ context.Context, target pingTarget, count int, _ listingPlan) pingResult {
+		return summarize(target.ID, []time.Duration{time.Millisecond}, count)
+	}
+	c := panel.New(config.Config{PanelURL: srv.URL, Token: "tok"})
+	job := listingTestJob()
+	waitIdle := func() {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			r.mu.Lock()
+			running := len(r.running)
+			r.mu.Unlock()
+			if running == 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("listing runner did not finish")
+	}
+	r.MaybeRun(context.Background(), c, []ListingJob{job})
+	waitIdle()
+	r.mu.Lock()
+	_, done := r.done[job.RequestID]
+	r.mu.Unlock()
+	if done {
+		t.Fatal("failed upload must remain retryable")
+	}
+	r.MaybeRun(context.Background(), c, []ListingJob{job})
+	waitIdle()
+	r.MaybeRun(context.Background(), c, []ListingJob{job})
+	waitIdle()
+	job.RequestID = "new-attempt"
+	r.MaybeRun(context.Background(), c, []ListingJob{job})
+	waitIdle()
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 3 {
+		t.Fatalf("expected 3 uploads, got %d", posts)
 	}
 }

@@ -23,7 +23,7 @@ function createTransport(mail: MailSettings) {
   });
 }
 
-/** 测试发送前先校验连接和 SMTP 认证，保持与参考项目的流程一致。 */
+/** 测试发送前先校验连接和 SMTP 认证。 */
 export async function verifyMailConnection(mail: MailSettings): Promise<void> {
   if (capture) return;
   const transport = createTransport(mail);

@@ -1,7 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { ArrowRight, CalendarClock, CircleAlert, Wallet } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
 import { CYCLE_MONTHS, type CouponQuoteDTO, type InvoiceDTO } from '../../shared/index';
 import { CouponInput } from '@/components/CouponInput';
 import { Button } from '@/components/ui/button';
@@ -16,6 +15,7 @@ import { daysLeft, daysLeftText, formatDate, formatMoney, monthsLabel } from '@/
 import { useCurrency, useMe } from '@/lib/queries';
 import { renewalEstimate } from '@/lib/renewal';
 import { toast } from '@/lib/toast';
+import { useCreateInvoice } from '@/hooks/create-invoice';
 
 function SummaryRow({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -31,7 +31,6 @@ export function RenewalCard({ inst }: { inst: AnyInstance }) {
   const { t, L } = useI18n();
   const currency = useCurrency();
   const me = useMe();
-  const navigate = useNavigate();
   const confirm = useConfirm();
   const instancePath = useInstanceApiPath(inst.id);
   const invalidate = useInvalidateInstance(inst.id);
@@ -51,13 +50,9 @@ export function RenewalCard({ inst }: { inst: AnyInstance }) {
   const left = daysLeft(inst.expiresAt);
   const duration = monthsLabel(CYCLE_MONTHS[inst.billingCycle] * periods);
 
-  const renew = useMutation({
+  const renew = useCreateInvoice({
     mutationFn: (body: { periods: number; couponCode?: string }) => api.post<{ invoice: InvoiceDTO }>(`${instancePath}/renew`, body),
-    onSuccess: (r) => {
-      toast.success(t('invoice.created'), r.invoice.no);
-      setCoupon(null);
-      navigate('/console/invoices');
-    },
+    onCreated: () => setCoupon(null),
     onError: (error) => toast.fromError(error, t('settings.renewFailed')),
   });
   const autoRenew = useMutation({
@@ -154,7 +149,8 @@ export function RenewalCard({ inst }: { inst: AnyInstance }) {
             {estimate.expired && <p className="mt-2 text-xs leading-5 text-warning-text">{t('renewal.expiredHint')}</p>}
           </div>
 
-          {estimate.original > 0 && !unavailable && (
+          {inst.nightRenewPrice != null && <p className="text-xs leading-5 text-fg-3">{t('night.recurringRenewHint', { amount: m(inst.nightRenewPrice), cycle: L.billingCycle[inst.billingCycle] })}</p>}
+          {estimate.original > 0 && !unavailable && inst.nightRenewPrice == null && (
             <div className="border-t border-line pt-3">
               <CouponInput
                 target={{ kind: 'RENEW', instanceId: inst.id, periods }}
@@ -205,6 +201,7 @@ export function RenewalCard({ inst }: { inst: AnyInstance }) {
               size="lg"
               className="w-full"
               loading={renew.isPending}
+              loadingText={renew.loadingText}
               disabled={busy || unavailable || pricing || (!me.data && !me.isError)}
               onClick={() => me.isError && !me.data ? void me.refetch() : void askRenew()}
             >

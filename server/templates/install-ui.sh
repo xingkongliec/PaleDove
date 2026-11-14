@@ -1,6 +1,10 @@
 # Shared by the rendered installer; functions read the controlling terminal, never the script pipe.
 UI_VALUE=''
-UI_STYLE=text
+UI_BOLD=''
+UI_DIM=''
+UI_ACCENT=''
+UI_DANGER=''
+UI_RESET=''
 RFW_FLAGS=()
 RFW_RULE_SELECTION='1 2 3 4 5'
 RFW_GEO=blacklist
@@ -12,41 +16,102 @@ RFW_SUMMARY_GEO='黑名单 CN'
 NONINTERACTIVE="${PALEDOVE_NONINTERACTIVE:-0}"
 NODE_ACTION=menu
 
-ui_menu() {
-  local prompt=$1 default=$2 tag label valid menu_height
-  shift 2
-  if [ "$UI_STYLE" = dialog ]; then
-    menu_height=$(( $# / 2 ))
-    [ "$menu_height" -le 8 ] || menu_height=8
-    UI_VALUE=$(whiptail --title 'PaleDove · 宿主机管理' --cancel-button '退出' --default-item "$default" --menu "$prompt" 0 78 "$menu_height" "$@" 3>&1 1>&9 2>&3 <&9) || die '已取消操作，尚未应用配置'
-    return
+ui_init() {
+  UI_BOLD=''; UI_DIM=''; UI_ACCENT=''; UI_DANGER=''; UI_RESET=''
+  if [ "${TERM:-dumb}" != dumb ] && [ "${UI_TEXT_ONLY:-0}" != 1 ] && [ "${NO_COLOR+x}" != x ]; then
+    UI_BOLD=$'\033[1m'; UI_DIM=$'\033[2m'; UI_ACCENT=$'\033[1;36m'; UI_DANGER=$'\033[1;31m'; UI_RESET=$'\033[0m'
   fi
+}
+
+ui_divider() {
+  printf '  %s────────────────────────────────────────────────────%s\n' "$UI_DIM" "$UI_RESET" >&9
+}
+
+ui_section() {
+  printf '\n' >&9
+  ui_divider
+  printf '  %s%s%s\n' "$UI_BOLD" "$1" "$UI_RESET" >&9
+  ui_divider
+}
+
+ui_service_status() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$1" 2>/dev/null; then
+    printf '运行中'
+  elif command -v "$2" >/dev/null 2>&1; then
+    printf '已安装（未运行）'
+  else
+    printf '未安装'
+  fi
+}
+
+ui_banner() {
+  local os='未知系统' arch host
+  if [ -r /etc/os-release ]; then os=$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-未知系统}"); fi
+  arch=$(uname -m 2>/dev/null || printf '未知')
+  host=$(hostname 2>/dev/null || printf '未知')
+  printf '\n  %sPaleDove 节点安装管理%s\n' "$UI_ACCENT" "$UI_RESET" >&9
+  printf '  %sIncus · LXC / KVM Host Setup%s\n' "$UI_DIM" "$UI_RESET" >&9
+  ui_section '系统信息'
+  printf '  操作系统  :  %s\n  系统架构  :  %s\n  主机名称  :  %s\n' "$os" "$arch" "$host" >&9
+  printf '  Incus     :  %s\n' "$(ui_service_status incus.service incus)" >&9
+  printf '  Agent     :  %s\n' "$(ui_service_status paledove-agent.service /usr/local/bin/paledove-agent)" >&9
+  printf '  RFW       :  %s\n' "$(ui_service_status rfw.service /root/rfw/rfw)" >&9
+  ui_divider
+}
+
+ui_menu() {
+  local prompt=$1 default=$2 title=${1%%$'\n'*} tag label number color hint index default_number=$2
+  shift 2
+  ui_section "$title"
+  if [ "$title" != "$prompt" ]; then printf '%s\n\n' "${prompt#*$'\n'}" >&9; fi
+  if [ "$#" = 4 ] && [ "$1" = yes ] && [ "$3" = no ]; then
+    hint='y/N'
+    [ "$default" != yes ] || hint='Y/n'
+    printf '    %sy)%s %s    %sn)%s %s\n' "$UI_ACCENT" "$UI_RESET" "$2" "$UI_ACCENT" "$UI_RESET" "$4" >&9
+    while true; do
+      printf '  请选择 [%s]（q 退出）: ' "$hint" >&9
+      IFS= read -r UI_VALUE <&9 || die '终端输入已关闭，取消操作'
+      case "${UI_VALUE:-$default}" in
+        y|Y|yes|YES|Yes|1) UI_VALUE=yes; return 0 ;;
+        n|N|no|NO|No|2) UI_VALUE=no; return 0 ;;
+        q|Q) die '已取消操作' ;;
+        *) warn '请输入 y 或 n' ;;
+      esac
+    done
+  fi
+  local values=() numbers=()
+  index=0
+  while [ "$#" -gt 0 ]; do
+    tag=$1; label=$2; shift 2
+    if [ "$tag" = cancel ]; then number=0; else index=$((index + 1)); number=$index; fi
+    color=$UI_ACCENT
+    case "$tag" in uninstall*) color=$UI_DANGER ;; esac
+    hint=''
+    if [ "$tag" = "$default" ]; then hint=' [默认]'; default_number=$number; fi
+    printf '    %s%s)%s  %s%s%s%s\n' "$color" "$number" "$UI_RESET" "$label" "$UI_DIM" "$hint" "$UI_RESET" >&9
+    values+=("$tag"); numbers+=("$number")
+  done
   while true; do
-    printf '\n  %s\n' "$prompt" >&9
-    local items=("$@")
-    while [ "$#" -gt 0 ]; do tag=$1; label=$2; shift 2; printf '    %-10s %s\n' "$tag)" "$label" >&9; done
-    printf '  请选择 [%s]（输入 q 退出）: ' "$default" >&9
+    printf '  请输入选项 [默认 %s]（q 退出）: ' "$default_number" >&9
     IFS= read -r UI_VALUE <&9 || die '终端输入已关闭，取消操作'
-    [ "$UI_VALUE" != q ] || die '已取消操作'
-    UI_VALUE=${UI_VALUE:-$default}
-    valid=0
-    set -- "${items[@]}"
-    while [ "$#" -gt 0 ]; do [ "$UI_VALUE" != "$1" ] || valid=1; shift 2; done
-    [ "$valid" = 1 ] && return 0
+    case "$UI_VALUE" in q|Q) die '已取消操作' ;; esac
+    UI_VALUE=${UI_VALUE:-$default_number}
+    for index in "${!values[@]}"; do
+      if [ "$UI_VALUE" = "${numbers[$index]}" ] || [ "$UI_VALUE" = "${values[$index]}" ]; then
+        UI_VALUE=${values[$index]}
+        return 0
+      fi
+    done
     warn '无效选项，请重新选择'
-    set -- "${items[@]}"
   done
 }
 
 ui_input() {
   local prompt=$1 default=$2
-  if [ "$UI_STYLE" = dialog ]; then
-    UI_VALUE=$(whiptail --title 'PaleDove · 宿主机管理' --cancel-button '退出' --inputbox "$prompt" 12 78 "$default" 3>&1 1>&9 2>&3 <&9) || die '已取消操作，尚未应用配置'
-  else
-    printf '\n  %s [%s]: ' "$prompt" "${default:-留空}" >&9
-    IFS= read -r UI_VALUE <&9 || die '终端输入已关闭，取消操作'
-    UI_VALUE=${UI_VALUE:-$default}
-  fi
+  printf '\n  %s [%s]（q 退出）: ' "$prompt" "${default:-留空}" >&9
+  IFS= read -r UI_VALUE <&9 || die '终端输入已关闭，取消操作'
+  case "$UI_VALUE" in q|Q) die '已取消操作' ;; esac
+  UI_VALUE=${UI_VALUE:-$default}
 }
 
 ui_toggle() {
@@ -155,24 +220,15 @@ configure_storage() {
 }
 
 configure_rfw() {
-  local rules='' iface default_iface='' options=()
-  if [ "$UI_STYLE" = dialog ]; then
-    rules=$(whiptail --title 'PaleDove · RFW 规则' --cancel-button '退出安装' --separate-output --checklist \
-      '空格勾选；与 Incudal 使用相同的 RFW 规则。HTTP／代理／全入站规则会影响业务访问。' 22 78 8 \
-      1 '屏蔽邮件 · SMTP 25/587/465/2525' ON 2 '屏蔽 HTTP 入站' ON 3 '屏蔽 SOCKS5 入站' ON \
-      4 '屏蔽全加密流量 · 严格模式' ON 5 '屏蔽 WireGuard' ON 6 '屏蔽 QUIC / HTTP3' OFF \
-      7 '屏蔽所有入站 · 优先于其他协议选项' OFF 3>&1 1>&9 2>&3 <&9) || die '已取消安装'
-    rules=${rules//$'\n'/ }
-    RFW_RULE_SELECTION=${rules:-C}
-  else
-    printf '\n  3 / 4 · RFW 协议规则（空格分隔，可多选）\n' >&9
-    printf '    1 邮件    2 HTTP    3 SOCKS5    4 全加密流量（严格）\n    5 WireGuard    6 QUIC/HTTP3    7 所有入站\n    A 全选 1–6    D 默认 1–5    C 清空\n' >&9
-    while true; do
-      ui_input '选择协议规则' D
-      RFW_RULE_SELECTION=$UI_VALUE
-      if rfw_arguments "$RFW_RULE_SELECTION" none '' 0; then break; fi
-    done
-  fi
+  local iface default_iface='' options=()
+  ui_section '3 / 4 · RFW 协议规则（输入编号，空格分隔，可多选）'
+  printf '    1) 屏蔽邮件发送    · SMTP 25/587/465/2525\n    2) 屏蔽 HTTP 入站   · 明文 HTTP 协议\n    3) 屏蔽 SOCKS5 入站 · 代理协议\n    4) 屏蔽全加密流量  · 严格模式\n    5) 屏蔽 WireGuard   · VPN 协议\n    6) 屏蔽 QUIC/HTTP3  · QUIC 协议\n    7) 屏蔽所有入站    · 覆盖其他协议选项\n\n    A) 全选 1–6    D) 默认 1–5    C) 清空\n' >&9
+  printf '  %s注意：HTTP、代理和所有入站规则可能影响业务访问。%s\n' "$UI_DANGER" "$UI_RESET" >&9
+  while true; do
+    ui_input '选择协议规则' D
+    RFW_RULE_SELECTION=$UI_VALUE
+    if rfw_arguments "$RFW_RULE_SELECTION" none '' 0; then break; fi
+  done
   ui_menu 'GeoIP 过滤模式' blacklist blacklist '黑名单 · 屏蔽指定国家' whitelist '白名单 · 仅允许指定国家' none '不使用 GeoIP · 全局协议过滤'
   RFW_GEO=$UI_VALUE
   if [ "$RFW_GEO" != none ]; then
@@ -190,7 +246,7 @@ configure_rfw() {
   while IFS= read -r iface; do
     iface=${iface%%@*}
     [[ "$iface" != lo && "$iface" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || continue
-    if [ "$iface" = "$default_iface" ]; then options+=("$iface" '默认出口网卡'); else options+=("$iface" "$iface"); fi
+    if [ "$iface" = "$default_iface" ]; then options+=("$iface" "$iface · 默认出口网卡"); else options+=("$iface" "$iface"); fi
   done < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}')
   [ "${#options[@]}" -gt 0 ] || die '没有可用于 RFW 的网络接口'
   [[ "$default_iface" =~ ^[A-Za-z0-9_.:-]{1,15}$ ]] || default_iface=${options[0]}
@@ -241,9 +297,9 @@ prepare_install_ui() {
         NODE_ACTION=$requested_action ;;
       --help)
         if [ "${NODE_MAINTENANCE_ONLY:-0}" = 1 ]; then
-          printf '用法：paledove-node [--text] [--uninstall | --uninstall-agent | --uninstall-rfw]\n默认显示本地维护菜单，不需要面板令牌。\n'
+          printf '用法：paledove [--text] [--uninstall | --uninstall-agent | --uninstall-rfw]\n默认显示本地维护菜单，不需要面板令牌；paledove-node 仍可使用。\n'
         else
-          printf '用法：bash install.sh [--text] [--install | --uninstall | --uninstall-agent | --uninstall-rfw]\n默认显示主菜单；--yes / --non-interactive 仅供安装时采用面板预设。\n安装后可运行 paledove-node 打开本地卸载菜单，无需面板令牌。\n'
+          printf '用法：bash install.sh [--text] [--install | --uninstall | --uninstall-agent | --uninstall-rfw]\n默认显示彩色数字菜单；--text 关闭菜单颜色，--yes / --non-interactive 仅供安装时采用面板预设。\n安装后可运行 paledove 打开本地维护菜单，无需面板令牌。\n'
         fi
         printf '卸载需要交互确认；整机卸载还须输入 YES，会删除所有实例和存储池数据。\n'
         exit 0 ;;
@@ -257,7 +313,8 @@ prepare_install_ui() {
   fi
   if [ "$NONINTERACTIVE" != 1 ]; then
     { exec 9<>/dev/tty; } 2>/dev/null || die '没有可交互终端；无人值守请传入 --yes，或设置 PALEDOVE_NONINTERACTIVE=1'
-    if [ "$UI_TEXT_ONLY" = 0 ] && [ "${TERM:-dumb}" != dumb ] && command -v whiptail >/dev/null 2>&1; then UI_STYLE=dialog; fi
+    ui_init
+    ui_banner
   fi
 }
 
@@ -276,7 +333,6 @@ configure_installation() {
   if [ "$NONINTERACTIVE" = 1 ]; then
     info '无人值守模式：采用面板预设安装选项'
   else
-    if [ "$UI_TEXT_ONLY" = 0 ] && [ "${TERM:-dumb}" != dumb ] && command -v whiptail >/dev/null 2>&1; then UI_STYLE=dialog; fi
     configure_storage
     ui_toggle '2 / 4 · 是否安装宿主机 Agent（推荐，负责心跳、流量和审查）？' "$INSTALL_AGENT"
     INSTALL_AGENT=$UI_VALUE
@@ -305,13 +361,18 @@ configure_installation() {
   if [ "$ENABLE_FIREWALL_RULES" = 1 ]; then rfw_arguments "$RFW_RULE_SELECTION" "$RFW_GEO" "$RFW_COUNTRIES" "$RFW_LOG_PORT_ACCESS" || die '防火墙配置无效'; fi
   local summary source_label=${STORAGE_SOURCE:-镜像文件 $STORAGE_SIZE}
   if [ "$STORAGE_DRIVER" = dir ] && [ -z "$STORAGE_SOURCE" ]; then source_label='Incus 默认目录'; fi
-  summary=$(printf '存储池  %s / %s\n存储来源  %s\nAgent  %s\nRFW 安装 / 启用  %s / %s\n协议规则  %s\nGeoIP  %s\n端口日志  %s\nRFW 网卡  %s' \
-    "$POOL_NAME" "$STORAGE_DRIVER" "$source_label" "$INSTALL_AGENT" "$INSTALL_FIREWALL" "$ENABLE_FIREWALL_RULES" \
+  summary=$(printf '  存储池    :  %s / %s\n  存储来源  :  %s\n  Agent     :  %s\n  RFW 安装  :  %s\n  启用规则  :  %s\n  协议规则  :  %s\n  GeoIP     :  %s\n  端口日志  :  %s\n  RFW 网卡  :  %s' \
+    "$POOL_NAME" "$STORAGE_DRIVER" "$source_label" \
+    "$([ "$INSTALL_AGENT" = 1 ] && printf '安装' || printf '跳过，保留现状')" \
+    "$([ "$INSTALL_FIREWALL" = 1 ] && printf '安装' || printf '跳过，保留现状')" \
+    "$([ "$ENABLE_FIREWALL_RULES" = 1 ] && printf '是' || printf '否，保留现状')" \
     "$([ "$ENABLE_FIREWALL_RULES" = 1 ] && printf '%s' "$RFW_SUMMARY_RULES" || printf '未启用')" \
-    "$([ "$ENABLE_FIREWALL_RULES" = 1 ] && printf '%s' "$RFW_SUMMARY_GEO" || printf '未启用')" "$RFW_LOG_PORT_ACCESS" "${RFW_INTERFACE:-自动检测}")
+    "$([ "$ENABLE_FIREWALL_RULES" = 1 ] && printf '%s' "$RFW_SUMMARY_GEO" || printf '未启用')" \
+    "$([ "$RFW_LOG_PORT_ACCESS" = 1 ] && printf '开启' || printf '关闭')" "${RFW_INTERFACE:-自动检测}")
   if [ "$NONINTERACTIVE" != 1 ]; then
-    ui_menu "4 / 4 · 确认安装配置（1=是，0=否）"$'\n\n'"$summary" yes yes '确认并开始安装' no '取消，退出脚本'
+    ui_menu "4 / 4 · 确认安装配置"$'\n\n'"$summary" yes yes '确认并开始安装' no '取消，退出脚本'
     [ "$UI_VALUE" = yes ] || die '已取消安装'
+  else
+    printf '\n%s\n\n' "$summary"
   fi
-  printf '\n%s\n\n' "$summary"
 }

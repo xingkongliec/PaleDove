@@ -1,4 +1,4 @@
-// 用户头像（参考 incudal）：按用户选择的风格从 DiceBear 生成，直接显示图片（不加圆形边框和背景）；
+// 用户头像：按用户选择的风格从 DiceBear 生成，直接显示图片（不加圆形边框和背景）；
 // 未配置头像 API、缺少头像信息或加载失败时显示名称首字母
 import { useState } from 'react';
 import { avatarUrl, type AvatarDTO } from '../shared/index';

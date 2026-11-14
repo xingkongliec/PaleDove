@@ -1,5 +1,36 @@
+install_paledove_egress_tools() {
+  local manager='' tool package
+  local missing=() packages=()
+  for tool in ip iptables wg; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  [ "${#missing[@]}" -gt 0 ] || return 0
+  printf '安装智能分流依赖 / installing egress tools: %s\n' "${missing[*]}"
+  for tool in apt-get dnf yum apk; do
+    if command -v "$tool" >/dev/null 2>&1; then manager=$tool; break; fi
+  done
+  for tool in "${missing[@]}"; do
+    case "$tool" in
+      ip) case "$manager" in dnf|yum) package=iproute ;; *) package=iproute2 ;; esac ;;
+      iptables) package=iptables ;;
+      wg) package=wireguard-tools ;;
+    esac
+    packages+=("$package")
+  done
+  case "$manager" in
+    apt-get) apt-get -o DPkg::Lock::Timeout=30 update -qq && DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=30 install -y --no-install-recommends "${packages[@]}" || return 1 ;;
+    dnf|yum) "$manager" install -y "${packages[@]}" || return 1 ;;
+    apk) apk add --no-cache "${packages[@]}" || return 1 ;;
+    *) return 1 ;;
+  esac
+  for tool in "${missing[@]}"; do
+    command -v "$tool" >/dev/null 2>&1 || return 1
+  done
+}
+
 install_paledove_agent() {
   local token="$1" panel=@@PALEDOVE_PANEL_URL@@ arch sha size version manifest tmp conf bin=/usr/local/bin/paledove-agent
+  export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
   if [ -z "$token" ]; then
     printf '[x] 缺少一次性安装令牌，请在面板中重新生成安装命令 / missing install token\n' >&2
     return 1
@@ -43,6 +74,7 @@ install_paledove_agent() {
     printf '[x] Agent 校验失败 / agent checksum mismatch\n' >&2
     return 1
   fi
+  install_paledove_egress_tools || printf '[!] 智能分流依赖未完整安装；启用出口时 Agent 将重试 / egress tools are incomplete; the agent will retry when enabled\n' >&2
   # 用一次性安装令牌换取 Agent 密钥（每次安装都会生成新密钥，旧 Agent 随即失效）
   if ! conf=$(curl -fsS --max-time 30 -H "x-paledove-install-token: $token" "$panel/api/agent/install-config"); then
     rm -f "$tmp"
@@ -62,6 +94,7 @@ After=network-online.target incus.service
 Wants=network-online.target
 
 [Service]
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/usr/local/bin/paledove-agent
 Restart=always
 RestartSec=10

@@ -2,11 +2,10 @@
 // （中国节点地图 + 三网线路概览 + 节点列表，与节点测试相同）。卖家、买家与管理员的记录里也能打开。
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Clock, Info } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { latencyLevel, type MarketPingDTO, type MarketPingSummaryDTO, type MarketPingVerdict } from '../../shared/index';
 import { CountryFlag } from '@/components/country';
 import { LAT_TEXT, ms } from '@/components/ping/ChinaPingMap';
-import { NodeTestView } from '@/components/ping/NodeTest';
 import { Modal } from '@/components/ui/dialog';
 import { Empty, ErrorState, Spinner, Tag } from '@/components/ui/misc';
 import { useI18n } from '@/i18n';
@@ -14,7 +13,9 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatDate } from '@/lib/format';
 
-const VERDICT_TONE: Record<MarketPingVerdict, 'success' | 'warning' | 'danger'> = { NORMAL: 'success', PARTIAL: 'warning', ABNORMAL: 'danger' };
+const NodeTestView = lazy(() => import('@/components/ping/NodeTest').then((module) => ({ default: module.NodeTestView })));
+
+const VERDICT_TONE: Record<MarketPingVerdict, 'success' | 'warning' | 'danger' | 'neutral'> = { NORMAL: 'success', PARTIAL: 'warning', ABNORMAL: 'danger', UNKNOWN: 'neutral' };
 
 /** 拨测状态标签：IP 正常 / 部分超时 / IP 异常 / 拨测中 / 未拨测 */
 export function PingVerdictTag({ ping }: { ping: MarketPingSummaryDTO }) {
@@ -38,9 +39,9 @@ function FastestChips({ ping, className }: { ping: MarketPingSummaryDTO; classNa
   const { t, locale } = useI18n();
   if (!ping.fastest.length) return null;
   return (
-    <div className={cn('flex flex-wrap gap-1.5', className)}>
+    <div className={cn('flex flex-wrap gap-1', className)}>
       {ping.fastest.map((f) => (
-        <span key={f.isp} className="tabular inline-flex items-center rounded border border-line bg-surface-2/60 px-1.5 py-px text-[11px] leading-[18px] text-fg-2">
+        <span key={f.isp} className="tabular inline-flex items-center rounded-sm border border-line bg-surface-2/60 px-1 text-[10px] leading-4 text-fg-2">
           {locale === 'en' ? f.provinceEn : f.province}
           {t(`ping.isp.${f.isp}`)}/<span className={LAT_TEXT[latencyLevel(f.latency)]}>{ms(f.latency)}</span>
         </span>
@@ -57,17 +58,16 @@ export function PingSummaryButton({ ping, onOpen }: { ping: MarketPingSummaryDTO
       type="button"
       onClick={onOpen}
       aria-label={t('market.ping.open')}
-      className="group -mx-1.5 w-[calc(100%+0.75rem)] rounded-md px-1.5 py-1 text-left transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      className="group block w-full rounded py-0.5 text-left transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
         <PingVerdictTag ping={ping} />
         <span className="tabular inline-flex items-center gap-1 text-[11px] text-fg-3">
           <Clock className="size-3" />
           {formatDate(ping.testedAt ?? ping.requestedAt, 'YYYY-MM-DD HH:mm:ss')}
         </span>
-        <span className="ml-auto text-[11px] text-fg-4 opacity-0 transition-opacity group-hover:opacity-100">{t('market.ping.view')}</span>
       </div>
-      <FastestChips ping={ping} className="mt-1.5" />
+      <FastestChips ping={ping} className="mt-1" />
     </button>
   );
 }
@@ -145,9 +145,9 @@ export function MarketPingDialog({ subject, onClose }: { subject: PingSubject | 
                 <Stat label={t('market.ping.stat.abnormal')} value={abnormal} hint={t('market.ping.stat.abnormalHint', { n: p.failedProvinces })} dot={abnormal ? 'bg-danger' : 'bg-fg-4'} />
                 <Stat
                   label={t('market.ping.stat.status')}
-                  value={<span className={p.verdict === 'NORMAL' ? 'text-success-text' : p.verdict === 'ABNORMAL' ? 'text-danger-text' : 'text-warning-text'}>{t(`market.ping.verdictShort.${p.verdict ?? 'PARTIAL'}`)}</span>}
+                  value={<span className={p.verdict === 'NORMAL' ? 'text-success-text' : p.verdict === 'ABNORMAL' ? 'text-danger-text' : p.verdict === 'PARTIAL' ? 'text-warning-text' : 'text-fg-3'}>{t(`market.ping.verdictShort.${p.verdict ?? 'UNKNOWN'}`)}</span>}
                   hint={t('market.ping.stat.statusHint')}
-                  dot={p.verdict === 'NORMAL' ? 'bg-success' : p.verdict === 'ABNORMAL' ? 'bg-danger' : 'bg-warning'}
+                  dot={p.verdict === 'NORMAL' ? 'bg-success' : p.verdict === 'ABNORMAL' ? 'bg-danger' : p.verdict === 'PARTIAL' ? 'bg-warning' : 'bg-fg-4'}
                 />
               </div>
             )}
@@ -159,7 +159,9 @@ export function MarketPingDialog({ subject, onClose }: { subject: PingSubject | 
             <Empty title={t('market.ping.failedTitle')} description={t(`market.ping.reason.${p.reason ?? 'error'}`)} />
           ) : (
             <>
-              <NodeTestView nodes={[{ label: subject.title, country: subject.country, testedAt: p.testedAt ?? p.requestedAt, method: p.method ?? 'icmp', results: p.results, targets: p.targets }]} />
+              <Suspense fallback={<div className="grid h-64 place-items-center"><Spinner /></div>}>
+                <NodeTestView nodes={[{ label: subject.title, country: subject.country, testedAt: p.testedAt ?? p.requestedAt, method: p.method ?? 'icmp', results: p.results, targets: p.targets }]} />
+              </Suspense>
               <p className="text-[11px] leading-relaxed text-fg-4">{t('market.ping.rule')}</p>
             </>
           )}

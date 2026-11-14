@@ -106,6 +106,17 @@ describe('node removal', { timeout: 20_000 }, () => {
     expect(result.stderr).not.toContain('CALL:');
   });
 
+  it('keeps destructive confirmation defaulting to cancel in the inline UI', () => {
+    const result = run(`exec 9>&1
+read() { UI_VALUE=''; }
+NODE_ACTION=uninstall
+dispatch_node_action`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('[y/N]');
+    expect(result.stdout).toContain('已取消卸载');
+    expect(result.stderr).not.toContain('CALL:');
+  });
+
   it('removes RFW alone without touching instances, Agent, UFW or packages', () => {
     const result = run(`NODE_ACTION=uninstall-rfw; ui_menu() { UI_VALUE=yes; }; dispatch_node_action`);
     expect(result.status, result.stderr).toBe(0);
@@ -203,7 +214,24 @@ check_incus_removal`);
     expect(saved).toBeTruthy();
     expect(saved).not.toMatch(/secret-node-install-token|pdi_secret|PRIVATE-PANEL-CERTIFICATE|private-panel.example.com|@@PALEDOVE_/);
     expect(spawnSync('bash', ['-n'], { input: saved, encoding: 'utf8' }).status).toBe(0);
-    expect(spawnSync('bash', ['-s', '--', '--help'], { input: saved, encoding: 'utf8' }).status).toBe(0);
+    const help = spawnSync('bash', ['-s', '--', '--help'], { input: saved, encoding: 'utf8' });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('用法：paledove ');
+    expect(help.stdout).toContain('paledove-node 仍可使用');
+    expect(script).not.toContain('whiptail');
+    // Exercise command publication with all system-path mutations intercepted.
+    const publication = script.split('# Persist a token-free maintenance entry')[1]?.split('install_incus_zabbly()')[0];
+    expect(publication).toBeTruthy();
+    const published = run(`mktemp() { printf /dev/null; }
+chmod() { record "chmod $*"; }
+mv() { record "mv $*"; }
+ln() { record "ln $*"; }
+# The marker's first line is a comment suffix, not part of the publication code.
+${publication!.slice(publication!.indexOf('\n') + 1)}`);
+    expect(published.status, published.stderr).toBe(0);
+    expect(published.stderr).toContain('CALL:chmod 755 /dev/null');
+    expect(published.stderr).toContain('CALL:mv -f /dev/null /usr/local/sbin/paledove-node');
+    expect(published.stderr).toContain('CALL:ln -sfnT -- /usr/local/sbin/paledove-node /usr/local/bin/paledove');
     const forbidden = spawnSync('bash', ['-s', '--', '--install', '--yes'], { input: saved, encoding: 'utf8' });
     expect(forbidden.status).toBe(1);
     expect(forbidden.stderr).toContain('本地维护命令仅支持卸载');

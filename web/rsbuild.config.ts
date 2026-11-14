@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     // 明确监听 IPv4 回环地址；默认的 localhost 在部分系统上只绑定 ::1，127.0.0.1 无法访问
     host: '127.0.0.1',
-    // 与参考项目一致；部分 Windows 环境的 5173 端口会被系统保留。
+    // 部分 Windows 环境的 5173 端口会被系统保留。
     port: 5180,
     // 账单详情等前端路由需要支持刷新和直接打开
     historyApiFallback: true,

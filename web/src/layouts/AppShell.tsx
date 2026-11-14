@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronsUpDown, ExternalLink, Languages, LogOut, Moon, PanelLeft, Plus, Search, Settings, Shield, Sun, UserRound, Wallet } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { LOCALE_NAMES, LOCALES, type Locale, type MeDTO } from '../shared/index';
 import { hasStoredLocale, useI18n, type MessageKey } from '@/i18n';
@@ -15,9 +15,10 @@ import { useCurrency, useMe, usePublicConfig } from '@/lib/queries';
 import { resolvedTheme, THEME_EVENT, toggleTheme } from '@/lib/theme';
 import { toast } from '@/lib/toast';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { PageTransition } from '@/components/PageTransition';
 import { UserAvatar } from '@/components/UserAvatar';
 import { DropdownMenu } from '@/components/ui/menu';
-import { Tooltip } from '@/components/ui/misc';
+import { PageLoading, Tooltip } from '@/components/ui/misc';
 import { CommandPalette } from './CommandPalette';
 import { Notifications } from './Notifications';
 import { TasksPopover } from './TasksPopover';
@@ -377,7 +378,7 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
   // 切换页面时回到顶部（桌面端滚动的是内容面板，手机端是窗口）
-  useEffect(() => {
+  useLayoutEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
     window.scrollTo({ top: 0 });
   }, [location.pathname]);
@@ -471,11 +472,11 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
         </aside>
       </div>
 
-      {/* 内容：桌面端为侧边栏右侧的圆角面板，面板内滚动 */}
+      {/* 内容面板建立定位边界，避免绝对定位的隐藏标签越过滚动区域撑高整页。 */}
       <div className={cn('transition-[padding] duration-300 ease-smooth lg:py-2 lg:pr-2', blocked ? '' : collapsed ? SIDEBAR_W_COLLAPSED : SIDEBAR_W)}>
         <div
           ref={scrollRef}
-          className="scrollbar-thin flex min-h-dvh flex-col bg-bg lg:h-[calc(100dvh-1rem)] lg:min-h-0 lg:overflow-y-auto lg:rounded-xl lg:border lg:border-line lg:shadow-xs"
+          className="scrollbar-thin console-scroll relative flex min-h-dvh flex-col bg-bg lg:h-[calc(100dvh-1rem)] lg:min-h-0 lg:overflow-y-auto lg:overscroll-y-contain lg:rounded-xl lg:border lg:border-line lg:shadow-xs"
         >
           <header
             ref={headerRef}
@@ -530,9 +531,15 @@ export function AppShell({ nav, area }: { nav: NavGroup[]; area: 'user' | 'admin
 
           <main className="w-full flex-1 p-4 lg:px-6 lg:py-7">
             {area === 'user' && !blocked && <OAuthBindBanner />}
-            <div key={location.pathname.split('/').slice(0, 4).join('/')} className="route-view">
-              {/* 错误边界：页面出错时保留侧边栏与顶栏；外层 key 在切换页面时重置。路由层不做透明度动画，避免页面切换时内容闪烁。 */}
-              {blocked ? <MaintenancePage m={maintenance!} /> : <ErrorBoundary><Outlet /></ErrorBoundary>}
+            <div className="route-view">
+              {/* 保持边界挂载：代码下载期间由路由 transition 保留当前页，准备好后再切换。 */}
+              {blocked ? <MaintenancePage m={maintenance!} /> : (
+                <ErrorBoundary resetKey={location.pathname}>
+                  <Suspense fallback={<PageLoading />}>
+                    <PageTransition><Outlet key={location.pathname} /></PageTransition>
+                  </Suspense>
+                </ErrorBoundary>
+              )}
             </div>
           </main>
           {cfg?.footer && <footer className="px-6 pb-8 text-center text-xs text-fg-4">{cfg.footer}</footer>}

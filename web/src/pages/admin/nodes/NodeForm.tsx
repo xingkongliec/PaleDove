@@ -30,9 +30,6 @@ export interface NodeFormValues {
   publicNicMode: PublicNicMode;
   publicNicParent: string;
   dnsServers: string;
-  installAgent: boolean;
-  installFirewall: boolean;
-  enableFirewallRules: boolean;
   // 以下仅在编辑页面修改
   region: string;
   serverFingerprint: string;
@@ -76,9 +73,6 @@ export function nodeToForm(n?: NodeDTO): NodeFormValues {
     publicNicMode: n?.publicNicMode ?? 'ROUTED',
     publicNicParent: n?.publicNicParent ?? '',
     dnsServers: n?.dnsServers ?? '1.1.1.1,8.8.8.8',
-    installAgent: n?.installAgent ?? true,
-    installFirewall: n?.installFirewall ?? false,
-    enableFirewallRules: n?.enableFirewallRules ?? false,
     region: n?.region ?? '',
     serverFingerprint: n?.serverFingerprint ?? '',
     project: n?.project ?? 'default',
@@ -119,31 +113,7 @@ export function hostPayload(v: NodeFormValues) {
     publicNicMode: v.publicNicMode,
     publicNicParent: v.publicNicParent || null,
     dnsServers: v.dnsServers,
-    installAgent: v.installAgent,
-    installFirewall: v.installFirewall,
-    enableFirewallRules: v.installFirewall && v.enableFirewallRules,
   };
-}
-
-/** 节点安装脚本选项；防火墙规则默认关闭，避免改动宿主机现有网络策略。 */
-export function InstallOptionsFields({ value, onChange }: { value: NodeFormValues; onChange: Setter }) {
-  const t = useT();
-  return (
-    <Section title={t('nodeForm.installOptions')}>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Switch checked={value.installAgent} onCheckedChange={(v) => onChange({ ...value, installAgent: v })} label={t('nodeForm.installAgent')} description={t('nodeForm.installAgentDesc')} />
-        <Switch checked={value.installFirewall} onCheckedChange={(v) => onChange({ ...value, installFirewall: v, enableFirewallRules: v ? value.enableFirewallRules : false })} label={t('nodeForm.installFirewall')} description={t('nodeForm.installFirewallDesc')} />
-        <Switch
-          checked={value.enableFirewallRules}
-          disabled={!value.installFirewall}
-          onCheckedChange={(v) => onChange({ ...value, enableFirewallRules: v })}
-          label={t('nodeForm.enableFirewallRules')}
-          description={t('nodeForm.enableFirewallRulesDesc')}
-        />
-      </div>
-      {value.installFirewall && value.enableFirewallRules && <p className="text-xs text-warning-text">{t('nodeForm.firewallWarning')}</p>}
-    </Section>
-  );
 }
 
 export function formToPayload(v: NodeFormValues) {

@@ -75,7 +75,16 @@ cat > "$CONFIG_FILE" <<'PALEDOVE_CONFIG'
 @@PALEDOVE_INITIAL_CONFIG@@
 PALEDOVE_CONFIG
 curl -fsS --max-time 10 http://localhost:2019/config/ -o "$WORK_DIR/current.json"
-jq -s '.[0] as $initial | (.[1] // {}) | .admin = $initial.admin | .apps = (.apps // {})' "$CONFIG_FILE" "$WORK_DIR/current.json" > "$WORK_DIR/merged.json"
+# A reload can reuse an expired leaf or intermediate from storage. A fresh, isolated
+# issuer renews the entire admin chain without deleting site certificates or local CA data.
+ADMIN_CA="paledove-admin-$(openssl rand -hex 8)"
+jq -s --arg ca "$ADMIN_CA" '.[0] as $initial | (.[1] // {})
+  | .admin = $initial.admin
+  | .admin.identity.issuers = [{module: "internal", ca: $ca}]
+  | .apps = (.apps // {})
+  | .apps.pki = (.apps.pki // {})
+  | .apps.pki.certificate_authorities = ((.apps.pki.certificate_authorities // {}) + {($ca): {name: "PaleDove Admin", install_trust: false}})
+  ' "$CONFIG_FILE" "$WORK_DIR/current.json" > "$WORK_DIR/merged.json"
 # Caddy otherwise treats an identical /load as a no-op, retaining the old identity certificate cache.
 curl -fsS --max-time 30 -X POST http://localhost:2019/load -H 'content-type: application/json' -H 'Cache-Control: must-revalidate' --data-binary "@$WORK_DIR/merged.json" >/dev/null
 
@@ -83,7 +92,7 @@ info '等待远程管理证书签发与校验 / waiting for a valid remote admin
 CERT_READY=0
 CERT_DEADLINE=$((SECONDS + 90))
 while [ "$SECONDS" -lt "$CERT_DEADLINE" ]; do
-  if ROOT_CERT=$(curl -fsS --max-time 5 http://localhost:2019/pki/ca/local | jq -er '.root_certificate | select(type == "string" and length > 0)'); then
+  if ROOT_CERT=$(curl -fsS --max-time 5 "http://localhost:2019/pki/ca/$ADMIN_CA" | jq -er '.root_certificate | select(type == "string" and length > 0)'); then
     printf '%s\n' "$ROOT_CERT" > "$WORK_DIR/root.crt"
     # Read the server chain without placing the panel's private key on this host.
     # The handshake may end with "client certificate required" after sending the chain.

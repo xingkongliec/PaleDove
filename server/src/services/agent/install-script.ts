@@ -34,7 +34,7 @@ export interface NodeInstallOptions {
   agentInstallToken?: string;
   /** 是否在宿主机安装 Agent；默认 true，保持旧版安装脚本行为 */
   installAgent?: boolean;
-  /** 是否部署参考 Incudal 的 RFW 防火墙 */
+  /** 是否部署 RFW 防火墙 */
   installFirewall?: boolean;
   /** 是否启用 RFW 规则并配置 Incus/UFW 网络放行规则 */
   enableFirewallRules?: boolean;
@@ -82,7 +82,7 @@ fi
 }
 
 /**
- * 安装宿主机 Agent 的 bash 函数 install_paledove_agent <一次性安装令牌>（节点安装脚本与通用 Agent 安装脚本共用，参考 incudal）：
+ * 安装宿主机 Agent 的 bash 函数 install_paledove_agent <一次性安装令牌>（节点安装脚本与通用 Agent 安装脚本共用）：
  *  1. 读取面板的版本清单，按宿主机架构下载 Go 版 Agent 并校验 sha256 与大小；
  *  2. 校验通过后才用一次性安装令牌换取 Agent 密钥（令牌放在请求头里，不进入访问日志；下载失败不会浪费令牌）；
  *  3. 原子替换二进制，写入配置与 systemd 服务并重启。同名的旧版 bash 上报程序会被替换。

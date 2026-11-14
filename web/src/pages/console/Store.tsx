@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Circle, CircleCheck, Dices, FileText, Info, Link2, ShoppingCart, Wallet } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { BILLING_CYCLES, isNatType, isVmType, scaleTraffic, type AffSummaryDTO, type BillingCycle, type CouponQuoteDTO, type ImageDTO, type InvoiceDTO, type PlanDTO, type ProductDTO } from '../../shared/index';
+import { BILLING_CYCLES, isNatType, isVmType, scaleTraffic, type AffSummaryDTO, type BillingCycle, type CouponQuoteDTO, type ImageDTO, type InvoiceDTO, type NightOfferDTO, type NodeStatus, type PlanDTO, type ProductDTO } from '../../shared/index';
 import { CountryFlag, useCountryArea, useCountryName } from '@/components/country';
 import { CouponInput } from '@/components/CouponInput';
 import { ProductNodeTestButton } from '@/components/ping/NodeTestButton';
@@ -22,6 +22,7 @@ import { formatBandwidth, formatCores, formatMemory, formatMoney, formatPrice, f
 import { cheapest } from '@/lib/plans';
 import { useCurrency, useMe, usePublicConfig } from '@/lib/queries';
 import { toast } from '@/lib/toast';
+import { useCreateInvoice } from '@/hooks/create-invoice';
 
 function randomHostname() {
   return `vps-${Math.random().toString(36).slice(2, 7)}`;
@@ -62,6 +63,7 @@ function Section({ title, extra, children }: { title: ReactNode; extra?: ReactNo
 interface SaleNode {
   id: number;
   name: string;
+  status: NodeStatus;
   /** 产品在这台宿主机上的流量倍率 */
   trafficMultiplier: number;
   /** 这台宿主机提供的镜像；null 为全部 */
@@ -70,13 +72,14 @@ interface SaleNode {
   plans: number[];
 }
 
-/** 选择节点：产品在所选地区有多台宿主机时显示；开不了所选套餐（或任何套餐）的节点标「缺货」 */
+/** 选择节点：分别显示离线与缺货状态。 */
 function NodeTabs({ nodes, value, onChange, planId }: { nodes: SaleNode[]; value: number | null; onChange: (id: number) => void; planId: number | null }) {
   const { t } = useI18n();
   return (
     <div className="mb-3 inline-flex max-w-full flex-wrap gap-1 rounded-lg border border-line bg-surface-2 p-1" role="radiogroup" aria-label={t('store.node')}>
       {nodes.map((n) => {
         const out = planId ? !n.plans.includes(planId) : !n.plans.length;
+        const status = n.status === 'OFFLINE' ? t('store.nodeOffline') : out ? t('store.nodeOut') : null;
         const on = value === n.id;
         return (
           <button
@@ -91,7 +94,7 @@ function NodeTabs({ nodes, value, onChange, planId }: { nodes: SaleNode[]; value
             )}
           >
             {n.name}
-            {out && <span className="rounded bg-surface-3 px-1 text-[10px] leading-4 text-fg-3">{t('store.nodeOut')}</span>}
+            {status && <span className="rounded bg-surface-3 px-1 text-[10px] leading-4 text-fg-3">{status}</span>}
           </button>
         );
       })}
@@ -145,7 +148,7 @@ function TrafficCell({ plan, traffic }: { plan: PlanDTO; traffic: number }) {
 }
 
 /** 套餐：宽屏为表格，窄屏一行一个卡片（标题 + 规格摘要 + 硬盘 / 流量 / 网络 / 价格） */
-function PlanTable({ plans, region, value, onChange, unavailable, trafficMultiplier }: { plans: PlanDTO[]; region: string; value: number | null; onChange: (id: number) => void; unavailable?: Set<number>; trafficMultiplier?: number }) {
+function PlanTable({ plans, region, value, onChange, unavailable, offline, trafficMultiplier }: { plans: PlanDTO[]; region: string; value: number | null; onChange: (id: number) => void; unavailable?: Set<number>; offline: boolean; trafficMultiplier?: number }) {
   const { t } = useI18n();
   const currency = useCurrency();
   const view = plans.map((p) => {
@@ -153,7 +156,10 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
     const monthly = p.prices.MONTHLY ?? best?.perMonth ?? 0;
     // 套餐库存用完，或所选节点开不了这个套餐
     const soldOut = p.stockLeft === 0 || !!unavailable?.has(p.id);
-    const stock = soldOut ? (
+    const disabled = offline || soldOut;
+    const stock = offline ? (
+      <Tag>{t('store.nodeOffline')}</Tag>
+    ) : soldOut ? (
       <Tag>{t('store.soldOut')}</Tag>
     ) : p.stockLeft !== null && p.stockLeft <= 5 ? (
       <Tag tone="warning">{t('store.stockLeft', { n: p.stockLeft })}</Tag>
@@ -166,7 +172,7 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
         {Number(monthly) > 0 && <span className="text-xs text-fg-3">{p.prices.MONTHLY ? t('store.perMonth') : t('store.perMonthEquivalent')}</span>}
       </span>
     );
-    return { p, soldOut, stock, price, checked: value === p.id, traffic: trafficOf(p, region, trafficMultiplier) };
+    return { p, disabled, stock, price, checked: value === p.id, traffic: trafficOf(p, region, trafficMultiplier) };
   });
   const radio = (checked: boolean) => (checked ? <CircleCheck className="size-4 shrink-0 text-fg" /> : <Circle className="size-4 shrink-0 text-fg-4" />);
 
@@ -183,13 +189,13 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
           <span>{t('store.colStock')}</span>
           <span>{t('store.colPrice')}</span>
         </div>
-        {view.map(({ p, soldOut, stock, price, checked, traffic }) => (
+        {view.map(({ p, disabled, stock, price, checked, traffic }) => (
           <button
             key={p.id}
             type="button"
             role="radio"
             aria-checked={checked}
-            disabled={soldOut}
+            disabled={disabled}
             onClick={() => onChange(p.id)}
             className={cn(
               'grid w-full items-center gap-3 border-b border-line/70 px-4 py-3 text-left text-[13px] transition-colors last:border-0 disabled:cursor-not-allowed disabled:opacity-45',
@@ -215,13 +221,13 @@ function PlanTable({ plans, region, value, onChange, unavailable, trafficMultipl
 
       {/* 窄屏：一行一个卡片 */}
       <div className="space-y-2 @2xl:hidden">
-        {view.map(({ p, soldOut, stock, price, checked, traffic }) => (
+        {view.map(({ p, disabled, stock, price, checked, traffic }) => (
           <button
             key={p.id}
             type="button"
             role="radio"
             aria-checked={checked}
-            disabled={soldOut}
+            disabled={disabled}
             onClick={() => onChange(p.id)}
             className={cn(
               'block w-full rounded-lg border px-3.5 py-3 text-left text-[13px] transition-[border-color,background-color] duration-150 disabled:cursor-not-allowed disabled:opacity-45',
@@ -288,6 +294,11 @@ export default function Store() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [params] = useSearchParams();
+  const nightOfferId = Number(params.get('nightOffer')) || null;
+  const nightOffer = useQuery({
+    queryKey: ['night-offer', nightOfferId], queryFn: () => api.get<{ offer: NightOfferDTO; closesAt: string }>(`/night-market/offers/${nightOfferId}`),
+    enabled: !!nightOfferId && !!me, staleTime: 0, refetchInterval: 30_000,
+  });
   const plans = useQuery({ queryKey: ['store-plans'], queryFn: () => api.get<PlanDTO[]>('/public/plans') });
   const products = useQuery({ queryKey: ['store-products'], queryFn: () => api.get<ProductDTO[]>('/public/products') });
   const images = useQuery({ queryKey: ['store-images'], queryFn: () => api.get<ImageDTO[]>('/public/images') });
@@ -330,7 +341,7 @@ export default function Store() {
   // 该地区是否需要实名认证等地区信息
   const info = plan && region ? plan.regionInfo[region] : undefined;
   const regionCountry = regions.find((r) => r.name === region)?.country ?? '';
-  // 产品在所选地区的宿主机：多于一台时可以选择，开不了所选套餐的按售罄处理
+  // 产品在所选地区的宿主机：多于一台时可以选择，区分离线与库存不足。
   const saleNodes = useQuery({
     queryKey: ['sale-nodes', productId, region],
     queryFn: () => api.get<{ nodes: SaleNode[] }>(`/public/products/${productId}/nodes`, { region: region! }),
@@ -340,6 +351,7 @@ export default function Store() {
   const nodes = saleNodes.data?.nodes ?? [];
   const multiNode = nodes.length > 1;
   const node = nodes.find(n => n.id === nodeId) ?? nodes.find(n => planId && n.plans.includes(planId)) ?? nodes.find(n => n.plans.length) ?? nodes[0] ?? null;
+  const nodeOffline = node?.status === 'OFFLINE';
   // 单台和离线宿主机也按自己的镜像列表筛选；节点信息加载前不回退到地区镜像并集。
   const allowedImages = node ? node.imageIds : [];
   const usable = (images.data ?? []).filter((i) => (plan && isVmType(plan.type) ? i.forVm : i.forContainer) && (allowedImages === null || allowedImages.includes(i.id)));
@@ -403,27 +415,26 @@ export default function Store() {
   }, [usable, imageId]);
 
   const price = plan && cycle ? Number(plan.prices[cycle] ?? 0) : 0;
+  const night = nightOffer.data?.offer;
+  const nightMatches = !!night?.prize && night.prize.planId === planId && night.prize.cycle === cycle;
   // 应付金额：使用优惠码后为减免后的金额（只抵扣首期）
-  const due = coupon ? Number(coupon.total) : price;
+  const due = nightMatches ? Number(night!.amount) : coupon ? Number(coupon.total) : price;
   const balance = Number(me?.balance ?? 0);
   // 游客可以浏览并选好配置，购买时再登录 / 注册
   const guest = !me;
   const missing = [
     !region && t('store.need.region'),
     !plan && t('store.need.plan'),
-    plan && (plan.stockLeft === 0 || !node || !node.plans.includes(plan.id)) && t('store.nodeOut'),
+    plan && (nodeOffline ? t('store.nodeOffline') : (plan.stockLeft === 0 || !node || !node.plans.includes(plan.id)) && t('store.nodeOut')),
     !image && t('store.need.image'),
     !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname) && t('store.need.hostname'),
+    nightOfferId && !guest && nightOffer.isPending && t('night.checkoutLoading'),
+    nightOfferId && !guest && nightOffer.error && errorText(nightOffer.error),
   ].filter(Boolean) as string[];
 
-  const order = useMutation({
-    mutationFn: () => api.post<{ invoice: InvoiceDTO }>('/store/orders', { planId, region, imageId, cycle, hostname, password, sshKeys: combineSshKeys(savedKeys, keyIds, sshKeys), couponCode: coupon?.code, nodeId: node?.id }),
-    onSuccess: (r) => {
-      toast.success(t('invoice.created'), r.invoice.no);
-      qc.setQueryData(['invoice', r.invoice.id], r.invoice);
-      void qc.invalidateQueries({ queryKey: ['invoices'] });
-      navigate(`/console/invoices/${r.invoice.id}`);
-    },
+  const order = useCreateInvoice({
+    mutationFn: () => api.post<{ invoice: InvoiceDTO }>('/store/orders', { planId, region, imageId, cycle, hostname, password, sshKeys: combineSshKeys(savedKeys, keyIds, sshKeys), couponCode: nightMatches ? undefined : coupon?.code, nightMarketOfferId: nightMatches ? nightOfferId : undefined, nodeId: node?.id }),
+    onCreated: () => { void qc.invalidateQueries({ queryKey: ['night-market'] }); void qc.invalidateQueries({ queryKey: ['night-offer'] }); },
     onError: (e) => setError(errorText(e)),
   });
 
@@ -446,6 +457,9 @@ export default function Store() {
   return (
     <div>
       <PageHeader title={t('nav.store')} description={t('store.subtitle')} />
+      {nightOfferId && <Alert className="mb-4" tone={nightOffer.error || (night && !nightMatches) ? 'warning' : 'primary'} title={t('night.checkout')}>
+        {nightOffer.error ? errorText(nightOffer.error) : !night ? t('night.checkoutLoading') : nightMatches ? t('night.checkoutHint') : t('night.checkoutMismatch')}
+      </Alert>}
       {!regions.length ? (
         <Card>
           <Empty title={t('store.empty')} description={t('store.emptyDesc')} />
@@ -515,7 +529,7 @@ export default function Store() {
             <Section title={t('store.step.plan')} extra={<SwitchRulesButton from={node?.name} to={nodes.filter(n => n.id !== node?.id).map(n => n.name)} />}>
               {/* 只有一台宿主机时不显示节点选择 */}
               {multiNode && <NodeTabs nodes={nodes} value={node?.id ?? null} onChange={selectNode} planId={planId} />}
-              {productPlans.length ? <PlanTable plans={productPlans} region={region!} value={planId} onChange={setPlanId} unavailable={nodeUnavailable} trafficMultiplier={node?.trafficMultiplier} /> : <Empty title={t('store.empty')} />}
+              {productPlans.length ? <PlanTable plans={productPlans} region={region!} value={planId} onChange={setPlanId} unavailable={nodeUnavailable} offline={nodeOffline} trafficMultiplier={node?.trafficMultiplier} /> : <Empty title={t('store.empty')} />}
             </Section>
 
             <Section title={t('store.os')}>
@@ -601,7 +615,7 @@ export default function Store() {
             </div>
             <div className="px-4 pb-4">
               <div className="pt-1">
-                {price > 0 && !guest && (
+                {price > 0 && !guest && !nightMatches && (
                   <div className="py-1.5">
                     <CouponInput target={plan && cycle ? { kind: 'NEW', planId: plan.id, cycle } : null} value={coupon} onChange={setCoupon} currency={currency} />
                   </div>
@@ -609,12 +623,13 @@ export default function Store() {
                 <div className="flex items-baseline justify-between gap-3 pt-1">
                   <span className="text-[13px] text-fg-3">{t('store.amountDue')}</span>
                   <span className="tabular text-2xl font-semibold tracking-tight text-fg">
-                    {coupon && <span className="mr-1.5 text-sm font-normal text-fg-4 line-through">{formatMoney(price, currency)}</span>}
+                    {(coupon || nightMatches) && <span className="mr-1.5 text-sm font-normal text-fg-4 line-through">{formatMoney(nightMatches ? night!.prize!.originalPrice : price, currency)}</span>}
                     {formatPrice(due, currency)}
-                    {cycle && price > 0 && !coupon && <span className="ml-0.5 text-sm font-normal text-fg-3">/{L.billingCycle[cycle]}</span>}
+                    {cycle && price > 0 && !coupon && !nightMatches && <span className="ml-0.5 text-sm font-normal text-fg-3">/{L.billingCycle[cycle]}</span>}
                   </span>
                 </div>
-                {coupon && (
+                {nightMatches && <p className="mt-1 text-right text-xs text-fg-3">{t('night.savePercent', { percent: night!.discountPercent! })} · {night!.prize!.discountMode === 'RECURRING' ? t('night.recurringPrice', { amount: formatMoney(night!.amount!, currency), cycle: L.billingCycle[cycle!] }) : t('coupon.firstPeriodOnly', { amount: formatMoney(price, currency) })}</p>}
+                {coupon && !nightMatches && (
                   <p className="text-right text-xs text-fg-3">
                     {coupon.mode === 'RECURRING' ? t('coupon.recurringNote', { amount: formatMoney(coupon.total, currency) }) : t('coupon.firstPeriodOnly', { amount: formatMoney(price, currency) })}
                   </p>
@@ -656,6 +671,7 @@ export default function Store() {
                   icon={<ShoppingCart />}
                   className="mt-3 w-full"
                   loading={order.isPending}
+                  loadingText={order.loadingText}
                   disabled={missing.length > 0}
                   onClick={() => {
                     setError(null);

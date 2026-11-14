@@ -1,6 +1,6 @@
 # Agent 发布与下载
 
-正式下载方式参考 Incudal：GitHub Release 保存本项目的 Agent，面板代理下载并缓存，宿主机只访问面板同源接口。面板服务器无需 Go，也无需保存 `agent/dist/`。Agent 与面板的协议不同于 Incudal，须发布本项目编译的文件。
+Agent 通过 GitHub Release 分发，面板代理下载并缓存，宿主机只访问面板同源接口。面板服务器无需 Go，也无需保存 `agent/dist/`。为确保与面板的协议兼容，须发布本项目编译的文件。
 
 ## 部署配置
 
@@ -23,10 +23,10 @@ AGENT_RELEASE_TOKEN=
 3. 构建成功后创建同名 Release，附带以下文件；已有同名 Release 时跳过，更新须使用新版本号。
 
 ```text
-tag: agent-v0.8.0
+tag: agent-v0.8.2
 assets:
-  paledove-agent-x86_64-v0.8.0
-  paledove-agent-aarch64-v0.8.0
+  paledove-agent-x86_64-v0.8.2
+  paledove-agent-aarch64-v0.8.2
   SHA256SUMS
   manifest.json
 ```

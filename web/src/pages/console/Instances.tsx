@@ -359,6 +359,7 @@ export default function Instances() {
             columns={columns}
             rows={rows}
             loading={q.isLoading}
+            refreshing={q.isFetching}
             rowKey={(i) => i.id}
             onRowClick={(i) => navigate(`/console/instances/${i.id}`)}
             empty={

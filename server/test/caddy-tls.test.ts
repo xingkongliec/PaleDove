@@ -22,6 +22,8 @@ describe('Caddy admin TLS verification and registration retries', () => {
   let token: string;
   let panelCa: string;
   let failLoad = false;
+  let currentConfig: Record<string, unknown> = {};
+  let paths: string[] = [];
   let loads: unknown[] = [];
   const pairs: Record<string, { cert: string; key: string; root: string }> = {};
   let active: (typeof pairs)[string];
@@ -74,9 +76,11 @@ describe('Caddy admin TLS verification and registration retries', () => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk) => chunks.push(chunk));
       req.on('end', () => {
+        paths.push(req.url!);
         if (req.url === '/load') loads.push(JSON.parse(Buffer.concat(chunks).toString()));
+        if (req.url === '/load' && !failLoad) currentConfig = loads.at(-1) as Record<string, unknown>;
         res.writeHead(req.url === '/load' && failLoad ? 500 : 200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(req.url === '/pki/ca/local' ? { root_certificate: active.root } : failLoad ? { error: 'simulated load failure' } : {}));
+        res.end(JSON.stringify(req.url?.startsWith('/pki/ca/') ? { root_certificate: active.root } : req.url === '/config/' ? currentConfig : failLoad ? { error: 'simulated load failure' } : {}));
       });
     });
     await new Promise<void>((resolve) => httpd.listen(0, '127.0.0.1', resolve));
@@ -92,6 +96,8 @@ describe('Caddy admin TLS verification and registration retries', () => {
 
   beforeEach(async () => {
     loads = [];
+    paths = [];
+    currentConfig = {};
     failLoad = false;
     use('valid');
     node = await db.node.create({ data: {
@@ -155,6 +161,32 @@ describe('Caddy admin TLS verification and registration retries', () => {
     expect((await register()).json().ok).toBe(true);
     expect((await stored()).caddyTokenHash).toBeNull();
     expect(loads).toHaveLength(2);
+  });
+
+  it('preserves the renewed admin issuer, PKI and custom storage through registration and repeated site syncs', async () => {
+    const ca = 'paledove-admin-0123456789abcdef';
+    const pki = { certificate_authorities: { [ca]: { name: 'PaleDove Admin', install_trust: false }, local: { name: 'Site CA' } } };
+    const storage = { module: 'file_system', root: '/srv/caddy' };
+    currentConfig = { admin: { identity: { issuers: [{ module: 'internal', ca }] } }, apps: { pki }, storage };
+    expect((await register()).json()).toMatchObject({ ok: true });
+    await gateway.syncSites(node.id);
+    expect(loads).toHaveLength(2);
+    for (const loaded of loads) expect(loaded).toMatchObject({
+      admin: { identity: { issuers: [{ module: 'internal', ca }] } }, apps: { pki }, storage,
+    });
+  });
+
+  it('discovers the new admin CA when the installation callback was unavailable', async () => {
+    const ca = 'paledove-admin-fedcba9876543210';
+    currentConfig = {
+      admin: { identity: { issuers: [{ module: 'internal', ca }] } },
+      apps: { pki: { certificate_authorities: { [ca]: { install_trust: false } } } },
+    };
+    await gateway.testCaddy({ ...node, caddyCaCert: null });
+    expect(paths).toContain(`/pki/ca/${ca}`);
+    expect(paths).not.toContain('/pki/ca/local');
+    expect(await stored()).toMatchObject({ caddyStatus: 'READY', caddyCaCert: active.root.trim(), caddyTokenHash: null });
+    expect(loads[0]).toMatchObject({ admin: { identity: { issuers: [{ module: 'internal', ca }] } } });
   });
 
   it('validates expiry even when discovering the CA on a first connection', async () => {

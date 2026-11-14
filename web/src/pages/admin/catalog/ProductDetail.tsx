@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, Cpu, Info, Link2, Package, Pencil, Plus, Settings2, Tag as TagIcon, Trash, Waves } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ClipboardList, Cpu, Info, Link2, Package, PackagePlus, Pencil, Plus, Settings2, Tag as TagIcon, Trash, Waves } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { BILLING_CYCLES, formatMultiplier, type AdminPlanDTO, type AdminProductDTO, type NodeDTO } from '../../../shared/index';
 import { CountryFlag } from '@/components/country';
@@ -21,6 +21,7 @@ import { MODE_LABEL } from '../nodes/NodeForm';
 import { copyProductLink, multiplierRange, productCountry, productSubtitle } from './Plans';
 import { ProductSettings } from './ProductDialog';
 import { Panel, ProductAvatar, Stat, StatStrip, StatusDot, TwoLine } from './product-ui';
+import { PlanStockDialog } from './PlanStockDialog';
 
 type Tab = 'overview' | 'settings' | 'plans';
 
@@ -195,6 +196,7 @@ function PlansTab({ product, plans }: { product: AdminProductDTO; plans: AdminPl
   const qc = useQueryClient();
   const confirm = useConfirm();
   const navigate = useNavigate();
+  const [stockPlanId, setStockPlanId] = useState<number | null>(null);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['admin-plans'] });
     void qc.invalidateQueries({ queryKey: ['admin-products'] });
@@ -214,6 +216,8 @@ function PlansTab({ product, plans }: { product: AdminProductDTO; plans: AdminPl
   });
   const newPlan = `/admin/plans/new?product=${product.id}`;
   const navigateEdit = (p: AdminPlanDTO) => `/admin/plans/${p.id}/edit`;
+  const stockPlan = plans.find(p => p.id === stockPlanId);
+  const stockButton = (p: AdminPlanDTO, className?: string) => <Button size="icon-sm" variant="ghost" className={className} aria-label={t('plans.adjustStockFor', { name: p.name })} title={t('plans.adjustStock')} onClick={event => { event.stopPropagation(); setStockPlanId(p.id); }}><PackagePlus /></Button>;
 
   return (
     <Card className="overflow-hidden">
@@ -289,9 +293,10 @@ function PlansTab({ product, plans }: { product: AdminProductDTO; plans: AdminPl
             headerClassName: 'hidden 2xl:table-cell',
             className: 'hidden 2xl:table-cell',
             cell: (p) => (
-              <span className="tabular text-[13px] whitespace-nowrap">
-                {p.activeInstances} <span className="text-fg-4">/ {p.stock ?? '∞'}</span>
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="tabular text-[13px] whitespace-nowrap">{p.activeInstances} <span className="text-fg-4">/ {p.stock ?? '∞'}</span></span>
+                {stockButton(p)}
+              </div>
             ),
           },
           {
@@ -322,6 +327,7 @@ function PlansTab({ product, plans }: { product: AdminProductDTO; plans: AdminPl
               // 行本身可点击进入编辑，控件需阻止冒泡
               <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                 <Switch checked={p.enabled} disabled={toggle.isPending} onCheckedChange={(v) => toggle.mutate({ id: p.id, enabled: v })} />
+                {stockButton(p, 'hidden md:inline-flex 2xl:hidden')}
                 <LinkButton size="icon-sm" variant="ghost" aria-label={t('common.edit')} title={t('common.edit')} to={navigateEdit(p)} className="ml-1">
                   <Pencil />
                 </LinkButton>
@@ -341,6 +347,7 @@ function PlansTab({ product, plans }: { product: AdminProductDTO; plans: AdminPl
           },
         ]}
       />
+      {stockPlan && <PlanStockDialog key={stockPlan.id} plan={stockPlan} onClose={() => setStockPlanId(null)} />}
     </Card>
   );
 }

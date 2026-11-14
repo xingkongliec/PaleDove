@@ -453,7 +453,8 @@ function Logs() {
     <>
       <DataTable
         rows={q.data?.items}
-        loading={q.isLoading}
+        loading={q.isLoading || q.isPlaceholderData}
+        refreshing={q.isFetching}
         rowKey={(l) => l.id}
         empty={<Empty title={t('billing.noLogs')} />}
         columns={[
@@ -482,7 +483,8 @@ function Orders() {
     <>
       <DataTable
         rows={q.data?.items}
-        loading={q.isLoading}
+        loading={q.isLoading || q.isPlaceholderData}
+        refreshing={q.isFetching}
         rowKey={(o) => o.id}
         empty={<Empty title={t('billing.noOrders')} />}
         columns={[
@@ -518,7 +520,8 @@ function Payments() {
     <>
       <DataTable
         rows={q.data?.items}
-        loading={q.isLoading}
+        loading={q.isLoading || q.isPlaceholderData}
+        refreshing={q.isFetching}
         rowKey={(p) => p.id}
         empty={<Empty title={t('billing.noPayments')} />}
         columns={[

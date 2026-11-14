@@ -96,6 +96,12 @@ export function ChinaPingMap({ summary }: { summary: PingSummary }) {
             </Badge>
           </div>
           <div className="space-y-1">
+            {info.regional && (
+              <div className="flex justify-between gap-3">
+                <span className="text-fg-2">{info.province}</span>
+                <span className={cn('tabular font-medium', LAT_TEXT[latencyLevel(info.regional.latency)])}>{ms(info.regional.latency) ?? t('ping.timeout')}</span>
+              </div>
+            )}
             {PING_ISPS.map((isp) => {
               const r = info.byIsp[isp];
               if (!r) return null;

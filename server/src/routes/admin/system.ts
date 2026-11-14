@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { EMAIL_DOMAIN_MODES, LOG_MODULES, normalizeEmailDomain, TASK_STATUSES, TRANSFER_FEE_MODES, TASK_TYPES, type AdminSettingsDTO, type AdminStatsDTO, type SiteSettings } from '../../shared/index.ts';
+import { EMAIL_DOMAIN_MODES, LOG_MODULES, normalizeEmailDomain, POPUP_CONTENT_LIMIT, TASK_STATUSES, TRANSFER_FEE_MODES, TASK_TYPES, type AdminSettingsDTO, type AdminStatsDTO, type SiteSettings } from '../../shared/index.ts';
 import { config } from '../../config.ts';
 import { adminGuard, idParam, logActivity, pageQuery, paging, panelUrl, parse, requireAdmin } from '../../lib/http.ts';
 import { containsInsensitive, isSqlite, prisma, Prisma } from '../../lib/prisma.ts';
@@ -11,6 +11,7 @@ import { downloadIcon, siteIconUrl } from '../../services/site-icon.ts';
 import { isMailConfigured, sendTestEmail, verifyMailConnection } from '../../services/mail/mailer.ts';
 import { getSystemInfo } from '../../lib/system-info.ts';
 import { emailAnnouncement } from '../../services/announcements.ts';
+import { adminPopupSettings, savePopupNotice, savePopupPromotion } from '../../services/popups.ts';
 import { dayjs } from '../../lib/time.ts';
 import { getNodeResources } from '../../services/nodes.ts';
 import { m, t } from '../../i18n/index.ts';
@@ -186,6 +187,25 @@ export default async function adminSystemRoutes(app: FastifyInstance) {
   };
 
   app.get('/api/admin/settings', async () => adminSettings(await getSettings()));
+
+  app.get('/api/admin/settings/popups', adminPopupSettings);
+  app.put('/api/admin/settings/popups/notice', async (req) => {
+    const admin = requireAdmin(req);
+    const body = parse(z.object({ enabled: z.boolean(), title: z.string().trim().max(100), content: z.string().trim().max(POPUP_CONTENT_LIMIT) }), req.body);
+    const notice = await savePopupNotice(body);
+    await logActivity(req, admin.id, 'admin.settings', JSON.stringify({ section: 'popup.notice', enabled: notice.enabled }));
+    return notice;
+  });
+  app.put('/api/admin/settings/popups/promotion', async (req) => {
+    const admin = requireAdmin(req);
+    const body = parse(z.object({
+      enabled: z.boolean(), title: z.string().trim().max(100), planId: z.number().int().positive().nullable(),
+      imageUrl: z.string().trim().max(1000).pipe(z.union([z.literal(''), z.url({ protocol: /^https?$/, error: m('popup.imageUrlInvalid') })])),
+    }), req.body);
+    const promotion = await savePopupPromotion(body);
+    await logActivity(req, admin.id, 'admin.settings', JSON.stringify({ section: 'popup.promotion', enabled: promotion.enabled, planId: promotion.planId }));
+    return promotion;
+  });
 
   app.put('/api/admin/settings', async (req) => {
     const admin = requireAdmin(req);

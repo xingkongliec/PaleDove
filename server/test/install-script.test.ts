@@ -100,6 +100,46 @@ install_paledove_agent 'unused-install-token'
     expect(result.stderr).not.toContain('TOKEN_CONSUMED');
   });
 
+  it.each([false, true])('installs missing egress packages and verifies wg is available (all missing: %s)', (allMissing) => {
+    const result = spawnSync('bash', ['-s'], { encoding: 'utf8', input: `
+set -euo pipefail
+INSTALLED=0
+command() {
+  if [ "$1" = -v ]; then
+    case "$2" in
+      wg) [ "$INSTALLED" = 1 ] ;;
+      ip|iptables) [ "$INSTALLED" = 1 ] || [ '${allMissing}' = false ] ;;
+      apt-get) return 0 ;;
+      *) return 1 ;;
+    esac
+  else builtin command "$@"; fi
+}
+apt-get() {
+  printf 'PACKAGE:%s\\n' "$*"
+  case " $* " in *' install '*) INSTALLED=1 ;; esac
+}
+${agentSetupSection('https://panel.example.com')}
+install_paledove_egress_tools
+install_paledove_egress_tools
+` });
+    expect(result.status, result.stderr).toBe(0);
+    const installs = result.stdout.split('\n').filter((line) => line.startsWith('PACKAGE:') && line.includes(' install '));
+    expect(installs).toHaveLength(1);
+    expect(installs[0]).toContain(allMissing ? 'iproute2 iptables wireguard-tools' : 'wireguard-tools');
+    expect(result.stdout).toContain('update -qq');
+  });
+
+  it('reports an egress dependency install failure instead of pretending wg is available', () => {
+    const result = spawnSync('bash', ['-s'], { encoding: 'utf8', input: `
+set -euo pipefail
+command() { case "$2" in ip|iptables|apt-get) return 0 ;; *) return 1 ;; esac; }
+apt-get() { return 1; }
+${agentSetupSection('https://panel.example.com')}
+install_paledove_egress_tools
+` });
+    expect(result.status).toBe(1);
+  });
+
   it('renders a syntactically valid caddy script', () => {
     const script = renderCaddyInstallScript({
       panelUrl: 'https://panel.example.com',

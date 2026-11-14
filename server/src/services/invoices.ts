@@ -1,4 +1,4 @@
-import { BILLING_CYCLES, CYCLE_PRICE_FIELD, hasIpv6Mode, isNatType, isPublicIpv4Mode, isVmType, productNodeOption, scaleTraffic, type InvoiceDTO, type InvoicePurchaseConfigDTO } from '../shared/index.ts';
+import { BILLING_CYCLES, CYCLE_PRICE_FIELD, hasIpv6Mode, isNatType, isPublicIpv4Mode, isVmType, productNodeOption, scaleTraffic, type InvoiceDTO, type InvoicePurchaseConfigDTO, type NightPrizeSnapshot } from '../shared/index.ts';
 import { encrypt, decrypt } from '../lib/crypto.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { containsInsensitive, prisma, Prisma, type Invoice, type User } from '../lib/prisma.ts';
@@ -8,6 +8,7 @@ import { quoteCoupon, recurringDiscount } from './coupons.ts';
 import { orderNo, purchase, renew, type PurchaseInput } from './billing.ts';
 import { purchaseTrafficReset } from './lifecycle.ts';
 import { toInvoice } from './serializers.ts';
+import { nightTransaction, normalizeNightPrize, requireNightOffer } from './night-market.ts';
 
 type InvoiceWithRelations = Invoice & {
   instance: { hostname: string; type: 'LXC_NAT' | 'KVM_NAT' | 'KVM_IPV4' } | null;
@@ -74,10 +75,11 @@ export async function createPurchaseInvoice(user: User, input: PurchaseInput): P
   if (!plan || !plan.enabled || !plan.product.enabled) throw notFound(t('plan.unavailable'));
   const price = plan[CYCLE_PRICE_FIELD[input.cycle]];
   if (!price) throw badRequest(t('plan.cycleUnsupported', { cycle: labels().billingCycle[input.cycle] }));
+  if (input.nightMarketOfferId && input.couponCode) throw badRequest(t('night.noStacking'));
   const coupon = input.couponCode ? await quoteCoupon(prisma, input.couponCode, { userId: user.id, kind: 'NEW', productId: plan.productId, planId: plan.id, cycle: input.cycle, amount: price }) : null;
   const amount = coupon ? price.minus(coupon.discount) : price;
   const image = await prisma.image.findUnique({ where: { id: input.imageId }, select: { name: true } });
-  return createInvoice({
+  const invoiceInput = {
     userId: user.id,
     type: 'PURCHASE',
     amount,
@@ -92,15 +94,34 @@ export async function createPurchaseInvoice(user: User, input: PurchaseInput): P
       hostname: input.hostname,
       sshKeys: input.sshKeys ?? [],
       couponCode: input.couponCode ?? null,
+      discountSource: coupon ? 'COUPON' : null,
+      nightMarketOfferId: input.nightMarketOfferId ?? null,
       nodeId: input.nodeId ?? null,
       passwordEnc: input.password ? encrypt(input.password) : null,
       purchaseConfig: { ...purchaseConfig(plan, input, image?.name ?? null, true) },
     },
+  } satisfies Parameters<typeof createInvoice>[0];
+  if (!input.nightMarketOfferId) return createInvoice(invoiceInput);
+  return nightTransaction(async tx => {
+    const offer = await requireNightOffer(tx, user.id, input.nightMarketOfferId!, { planId: input.planId, cycle: input.cycle });
+    if (offer.invoice && (offer.invoice.status === 'PROCESSING' || (offer.invoice.status === 'PENDING' && (!offer.invoice.expiresAt || offer.invoice.expiresAt > new Date())))) {
+      return await tx.invoice.findUniqueOrThrow({ where: { id: offer.invoice.id }, include: { instance: { select: { hostname: true, type: true } }, plan: { select: { name: true, product: { select: { name: true } } } } } }) as InvoiceWithRelations;
+    }
+    if (offer.invoice?.status === 'PENDING') await tx.invoice.update({ where: { id: offer.invoice.id }, data: { status: 'EXPIRED' } });
+    const prize = normalizeNightPrize(offer.snapshot as unknown as NightPrizeSnapshot);
+    const invoice = await createInvoice({ ...invoiceInput, payload: { ...invoiceInput.payload, discountSource: 'NIGHT_MARKET', nightMarket: { name: prize.name, quality: prize.quality, discountPercent: offer.discountPercent, discountMode: prize.discountMode, periodId: offer.pool.periodId } }, amount: offer.amount, discount: offer.originalPrice.minus(offer.amount), expiresAt: new Date(Math.min(expiresAt().getTime(), offer.pool.period.closesAt.getTime())) }, tx);
+    await tx.nightMarketOffer.update({ where: { id: offer.id }, data: { invoiceId: invoice.id } });
+    return invoice;
   });
 }
 
 export async function getInvoiceDetail(id: number, userId: number): Promise<InvoiceDTO> {
   const row = await loadInvoice(id, userId);
+  return invoiceDetailDto(row);
+}
+
+/** 用户与管理员共用脱敏后的配置展示；调用方负责限定访问范围。 */
+export async function invoiceDetailDto(row: InvoiceWithRelations): Promise<InvoiceDTO> {
   const dto = invoiceDto(row);
   if (row.type !== 'PURCHASE' || dto.purchaseConfig || !row.planId) return dto;
   // 旧账单没有下单配置快照，只以当前关联套餐补充展示，不改写历史数据。
@@ -118,14 +139,15 @@ export async function createRenewInvoice(userId: number, instanceId: number, per
   if (!Number.isInteger(periods) || periods < 1 || periods > 36) throw badRequest(t('renew.invalidPeriods'));
   const inst = await prisma.instance.findFirst({ where: { id: instanceId, userId, status: { notIn: ['DELETED', 'DELETING'] } }, include: { plan: { select: { productId: true } }, coupon: true } });
   if (!inst) throw notFound(t('instance.notFound'));
+  if (inst.nightRenewPrice !== null && couponCode) throw badRequest(t('night.noStacking'));
   const existing = await prisma.invoice.findFirst({ where: { userId, instanceId, type: 'RENEW', status: { in: ['PENDING', 'PROCESSING'] } }, orderBy: { id: 'desc' }, include: { instance: { select: { hostname: true, type: true } }, plan: { select: { name: true, product: { select: { name: true } } } } } });
   if (existing) return existing as InvoiceWithRelations;
   if (inst.status === 'CREATING' && !inst.provisionedAt) throw badRequest(t('renew.notProvisioned'));
   const original = inst.price.mul(periods);
   const coupon = couponCode ? await quoteCoupon(prisma, couponCode, { userId, kind: 'RENEW', productId: inst.plan?.productId ?? null, planId: inst.planId, cycle: inst.billingCycle, amount: original, periods }) : null;
   const bound = !coupon && inst.coupon ? inst.coupon : null;
-  const discount = coupon?.discount ?? (bound ? recurringDiscount(bound, inst.price, periods) : new Prisma.Decimal(0));
-  const applied = coupon?.coupon ?? bound;
+  const discount = inst.nightRenewPrice !== null ? original.minus(inst.nightRenewPrice.mul(periods)) : coupon?.discount ?? (bound ? recurringDiscount(bound, inst.price, periods) : new Prisma.Decimal(0));
+  const applied = inst.nightRenewPrice !== null ? null : coupon?.coupon ?? bound;
   return createInvoice({
     userId,
     type: 'RENEW',
@@ -134,7 +156,7 @@ export async function createRenewInvoice(userId: number, instanceId: number, per
     description: t('order.renewDesc', { hostname: inst.hostname, periods }),
     instanceId,
     planId: inst.planId,
-    payload: { instanceId, periods, couponCode: couponCode || null },
+    payload: { instanceId, periods, couponCode: couponCode || null, appliedCouponCode: applied?.code ?? null, discountSource: inst.nightRenewPrice !== null ? 'NIGHT_MARKET' : applied ? 'COUPON' : null },
   });
 }
 
@@ -165,19 +187,21 @@ async function createInvoice(input: {
   payload: Prisma.InputJsonValue;
   instanceId?: number;
   planId?: number | null;
-}): Promise<InvoiceWithRelations> {
-  const row = await prisma.invoice.create({
+  expiresAt?: Date;
+}, db: Pick<Prisma.TransactionClient, 'invoice'> = prisma): Promise<InvoiceWithRelations> {
+  const row = await db.invoice.create({
     data: {
       no: `INV${orderNo()}`,
       userId: input.userId,
       type: input.type,
       amount: input.amount,
       discount: input.discount,
+      discountSource: (input.payload as { discountSource?: string }).discountSource ?? null,
       description: input.description,
       payload: input.payload,
       instanceId: input.instanceId,
       planId: input.planId ?? null,
-      expiresAt: expiresAt(),
+      expiresAt: input.expiresAt ?? expiresAt(),
     },
     include: { instance: { select: { hostname: true, type: true } }, plan: { select: { name: true, product: { select: { name: true } } } } },
   });
@@ -240,7 +264,8 @@ export async function payInvoice(id: number, userId: number): Promise<InvoiceWit
       let createdInstanceId: number | undefined;
       if (current.type === 'PURCHASE') {
         const input = { ...payload, password: payload.passwordEnc ? decrypt(String(payload.passwordEnc)) : undefined } as unknown as PurchaseInput;
-        createdInstanceId = (await purchase(user, input)).id;
+        const completedOffer = input.nightMarketOfferId ? await prisma.nightMarketOffer.findFirst({ where: { id: input.nightMarketOfferId, invoiceId: current.id, purchasedAt: { not: null }, pool: { userId } }, include: { order: true } }) : null;
+        createdInstanceId = completedOffer?.order?.instanceId ?? (await purchase(user, input, { invoiceId: current.id })).id;
       } else if (current.type === 'RENEW') {
         await renew(Number(payload.instanceId), Number(payload.periods), { userId, couponCode: typeof payload.couponCode === 'string' ? payload.couponCode : undefined });
       } else {

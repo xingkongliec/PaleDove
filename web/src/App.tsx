@@ -24,26 +24,35 @@ import {
   Wallet,
   ReceiptText,
   Radar,
+  MoonStar,
 } from 'lucide-react';
 import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { AppShell, type NavGroup } from './layouts/AppShell';
 import { TopProgress } from './components/TopProgress';
-import { FullPageLoading, PageLoading } from './components/ui/misc';
+import { RouteContent } from './components/RouteContent';
+import { PageTransition } from './components/PageTransition';
+import { SitePopups } from './components/SitePopups';
+import { FullPageLoading } from './components/ui/misc';
 import { setUnauthorizedHandler } from './lib/api';
 import { queryClient, useMe, usePublicConfig } from './lib/queries';
 import { loaders } from './lib/routes';
+import { trackLoading } from './lib/loading';
+import { useRoutePrefetch } from './lib/route-prefetch';
+import { useInteractionFeedback } from './hooks/interaction-feedback';
 import { PublicLayout } from './components/landing/PublicShell';
 import LoginPage from './pages/auth/Login';
 import { consoleRedirect, LEGACY_CONSOLE_PATHS } from './shared/index';
 
 // 页面按路由拆分：首屏只加载布局和当前页，其余在访问时下载；加载函数与预加载共用（lib/routes.ts）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const def = (load: () => Promise<unknown>) => lazy(load as () => Promise<{ default: ComponentType<any> }>);
+const def = (load: () => Promise<unknown>) => lazy(() => trackLoading(load()) as Promise<{ default: ComponentType<any> }>);
 
 const HomePage = def(loaders.home);
 const Dashboard = def(loaders.dashboard);
 const Store = def(loaders.store);
+const NightMarket = def(loaders.nightMarket);
+const AdminNightMarket = def(loaders.adminNightMarket);
 const Instances = def(loaders.instances);
 const Vpcs = def(loaders.vpcs);
 const InstanceDetail = def(loaders.instanceDetail);
@@ -80,8 +89,11 @@ const AdminProductDetail = def(loaders.adminProductDetail);
 const AdminInstanceCreate = def(loaders.adminInstanceCreate);
 const AdminImages = def(loaders.adminImages);
 const AdminUsers = def(loaders.adminUsers);
+const AdminUserCreate = def(loaders.adminUserCreate);
+const AdminUserDetail = def(loaders.adminUserDetail);
 const AdminRealname = def(loaders.adminRealname);
 const AdminBilling = def(loaders.adminBilling);
+const AdminInvoiceDetail = def(loaders.adminInvoiceDetail);
 const AdminPromotions = def(loaders.adminPromotions);
 const AdminCouponEdit = def(loaders.adminCouponEdit);
 const AdminAnnouncements = def(loaders.adminAnnouncements);
@@ -90,7 +102,7 @@ const AdminTasks = def(loaders.adminTasks);
 const AdminSettings = def(loaders.adminSettings);
 
 /** 用户侧边栏；「邀请推广」在管理员开启推广返利后显示 */
-const userNav = (aff: boolean): NavGroup[] => [
+const userNav = (aff: boolean, nightMarket: boolean): NavGroup[] => [
   { items: [{ to: '/console/dashboard', label: 'nav.dashboard', icon: <LayoutGrid />, end: true }] },
   {
     title: 'nav.group.cloud',
@@ -102,6 +114,7 @@ const userNav = (aff: boolean): NavGroup[] => [
       { to: '/console/transfer', label: 'nav.transfer', icon: <ArrowRightLeft /> },
       { to: '/console/marketplace', label: 'nav.market', icon: <MarketIcon />, end: true },
       { to: '/console/marketplace/mine', label: 'nav.marketMine', icon: <TagIcon /> },
+      ...(nightMarket ? [{ to: '/console/night-market', label: 'night.title' as const, icon: <MoonStar /> }] : []),
     ],
   },
   {
@@ -144,6 +157,7 @@ const adminNav: NavGroup[] = [
       { to: '/admin/billing', label: 'nav.admin.billing', icon: <Calculator /> },
       { to: '/admin/market', label: 'nav.admin.market', icon: <MarketIcon /> },
       { to: '/admin/promotions', label: 'nav.admin.promotions', icon: <TicketPercent /> },
+      { to: '/admin/night-market', label: 'night.adminTitle', icon: <MoonStar /> },
       { to: '/admin/announcements', label: 'nav.admin.announcements', icon: <Megaphone /> },
       { to: '/admin/documents', label: 'nav.admin.documents', icon: <BookOpen /> },
       { to: '/admin/tasks', label: 'nav.admin.tasks', icon: <ListChecks /> },
@@ -172,17 +186,14 @@ function MarketLayout({ active, adminTo }: { active: string; adminTo?: string })
   return <PublicLayout active={active} />;
 }
 
-/** 懒加载页面；布局外的整页（如首页）传入 FullPageLoading 作为占位 */
-function Lazy({ children, fallback = <PageLoading /> }: { children: ReactNode; fallback?: ReactNode }) {
-  return <Suspense fallback={fallback}>{children}</Suspense>;
-}
-
 function LegacyConsoleRedirect() {
   const { pathname, search, hash } = useLocation();
   return <Navigate to={`${consoleRedirect(pathname) ?? '/console/dashboard'}${search}${hash}`} replace />;
 }
 
 export default function App() {
+  useRoutePrefetch();
+  useInteractionFeedback();
   const navigate = useNavigate();
   const location = useLocation();
   const { data: site } = usePublicConfig();
@@ -213,58 +224,64 @@ export default function App() {
   return (
     <>
     <TopProgress />
+    <SitePopups />
+    <Suspense fallback={<FullPageLoading />}>
+    <RouteContent>
     <Routes>
-      <Route path="/" element={<Lazy fallback={<FullPageLoading />}><HomePage /></Lazy>} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<LoginPage mode="register" />} />
-      <Route path="/terms" element={<Lazy fallback={<FullPageLoading />}><LegalPage kind="terms" /></Lazy>} />
-      <Route path="/privacy" element={<Lazy fallback={<FullPageLoading />}><LegalPage kind="privacy" /></Lazy>} />
-      <Route path="/help" element={<Lazy fallback={<FullPageLoading />}><DocumentsPage /></Lazy>} />
-      <Route path="/help/:slug" element={<Lazy fallback={<FullPageLoading />}><LegalPage /></Lazy>} />
-      <Route path="/forgot-password" element={<Lazy fallback={<FullPageLoading />}><PasswordReset /></Lazy>} />
-      <Route path="/reset-password" element={<Lazy fallback={<FullPageLoading />}><PasswordReset reset /></Lazy>} />
-      <Route path="/verify-email" element={<Lazy fallback={<FullPageLoading />}><VerifyEmail /></Lazy>} />
+      <Route element={<PageTransition fadeOnly preserveAnimations={location.pathname === '/'}><Outlet /></PageTransition>}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<LoginPage mode="register" />} />
+        <Route path="/terms" element={<LegalPage kind="terms" />} />
+        <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+        <Route path="/help" element={<DocumentsPage />} />
+        <Route path="/help/:slug" element={<LegalPage />} />
+        <Route path="/forgot-password" element={<PasswordReset />} />
+        <Route path="/reset-password" element={<PasswordReset reset />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
+      </Route>
       {/* 交易市场：从首页进入时，登录与否都在公开页外壳里；控制台侧边栏的「交易市场」「我的上架」是 /console/marketplace 与 /console/marketplace/mine */}
       {/* 购买页：从首页进入时登录与否都在公开页外壳里，游客也能浏览并选配置，付款时再登录；管理员回到后台。控制台里的购买页是 /console/store */}
       <Route element={<MarketLayout active="store" adminTo="/admin" />}>
-        <Route path="/store" element={<Lazy><Store /></Lazy>} />
+        <Route path="/store" element={<Store />} />
       </Route>
       <Route element={<MarketLayout active="market" />}>
-        <Route path="/market" element={<Lazy><MarketPage /></Lazy>} />
+        <Route path="/market" element={<MarketPage />} />
       </Route>
       {LEGACY_CONSOLE_PATHS.map((path) => <Route key={path} path={`${path}/*`} element={<LegacyConsoleRedirect />} />)}
       <Route
         path="/console"
         element={
           <RequireAuth>
-            <AppShell nav={userNav(!!site?.affEnabled)} area="user" />
+            <AppShell nav={userNav(!!site?.affEnabled, !!site?.nightMarketEnabled)} area="user" />
           </RequireAuth>
         }
       >
         <Route index element={<Navigate to="/console/dashboard" replace />} />
-        <Route path="dashboard" element={<Lazy><Dashboard /></Lazy>} />
-        <Route path="instances" element={<Lazy><Instances /></Lazy>} />
-        <Route path="vpc" element={<Lazy><Vpcs /></Lazy>} />
-        <Route path="instances/:id" element={<Lazy><InstanceDetail /></Lazy>} />
-        <Route path="billing" element={<Lazy><Billing /></Lazy>} />
-        <Route path="invoices" element={<Lazy><Invoices /></Lazy>} />
-        <Route path="invoices/:id" element={<Lazy><InvoiceDetail /></Lazy>} />
-        <Route path="invite" element={<Lazy><Affiliate /></Lazy>} />
-        <Route path="account" element={<Lazy><Account /></Lazy>} />
-        <Route path="terminal" element={<Lazy><TerminalPage /></Lazy>} />
-        <Route path="docs/api" element={<Lazy><ApiDocs /></Lazy>} />
-        <Route path="transfer" element={<Lazy><TransferPage /></Lazy>} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="instances" element={<Instances />} />
+        <Route path="vpc" element={<Vpcs />} />
+        <Route path="instances/:id" element={<InstanceDetail />} />
+        <Route path="billing" element={<Billing />} />
+        <Route path="invoices" element={<Invoices />} />
+        <Route path="invoices/:id" element={<InvoiceDetail />} />
+        <Route path="invite" element={<Affiliate />} />
+        <Route path="account" element={<Account />} />
+        <Route path="terminal" element={<TerminalPage />} />
+        <Route path="docs/api" element={<ApiDocs />} />
+        <Route path="transfer" element={<TransferPage />} />
         {/* 控制台里的购买页与交易市场（/console/...）；从首页进入的 /store、/market 在公开页外壳里 */}
-        <Route path="store" element={<Lazy><Store /></Lazy>} />
-        <Route path="marketplace" element={<Lazy><MarketPage /></Lazy>} />
-        <Route path="marketplace/mine" element={<Lazy><MyListingsPage /></Lazy>} />
-        <Route path="documents" element={<Lazy><DocumentsPage consoleView /></Lazy>} />
-        <Route path="documents/:slug" element={<Lazy><DocumentDetail /></Lazy>} />
-        <Route path="activity" element={<Lazy><Activity /></Lazy>} />
-        <Route path="notifications" element={<Lazy><Notifications /></Lazy>} />
-        <Route path="tickets" element={<Lazy><Tickets /></Lazy>} />
-        <Route path="tickets/new" element={<Lazy><Tickets create /></Lazy>} />
-        <Route path="tickets/:id" element={<Lazy><Tickets /></Lazy>} />
+        <Route path="store" element={<Store />} />
+        <Route path="night-market" element={<NightMarket />} />
+        <Route path="marketplace" element={<MarketPage />} />
+        <Route path="marketplace/mine" element={<MyListingsPage />} />
+        <Route path="documents" element={<DocumentsPage consoleView />} />
+        <Route path="documents/:slug" element={<DocumentDetail />} />
+        <Route path="activity" element={<Activity />} />
+        <Route path="notifications" element={<Notifications />} />
+        <Route path="tickets" element={<Tickets />} />
+        <Route path="tickets/new" element={<Tickets create />} />
+        <Route path="tickets/:id" element={<Tickets />} />
       </Route>
       <Route
         path="/admin"
@@ -274,39 +291,45 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<Lazy><AdminDashboard /></Lazy>} />
-        <Route path="instances" element={<Lazy><AdminInstances /></Lazy>} />
-        <Route path="instances/new" element={<Lazy><AdminInstanceCreate /></Lazy>} />
-        <Route path="instances/:id" element={<Lazy><InstanceDetail admin /></Lazy>} />
-        <Route path="nodes" element={<Lazy><AdminNodes /></Lazy>} />
-        <Route path="ping" element={<Lazy><AdminPing /></Lazy>} />
-        <Route path="nodes/new" element={<Lazy><AdminNodeCreate /></Lazy>} />
-        <Route path="nodes/:id" element={<Lazy><AdminNodeDetail /></Lazy>} />
-        <Route path="nodes/:id/edit" element={<Lazy><AdminNodeEdit /></Lazy>} />
-        <Route path="plans" element={<Lazy><AdminPlans /></Lazy>} />
-        <Route path="plans/new" element={<Lazy><AdminPlanEdit /></Lazy>} />
-        <Route path="plans/:id/edit" element={<Lazy><AdminPlanEdit /></Lazy>} />
-        <Route path="products/:id" element={<Lazy><AdminProductDetail /></Lazy>} />
-        <Route path="images" element={<Lazy><AdminImages /></Lazy>} />
-        <Route path="users" element={<Lazy><AdminUsers /></Lazy>} />
-        <Route path="realname" element={<Lazy><AdminRealname /></Lazy>} />
+        <Route index element={<AdminDashboard />} />
+        <Route path="instances" element={<AdminInstances />} />
+        <Route path="instances/new" element={<AdminInstanceCreate />} />
+        <Route path="instances/:id" element={<InstanceDetail admin />} />
+        <Route path="nodes" element={<AdminNodes />} />
+        <Route path="ping" element={<AdminPing />} />
+        <Route path="nodes/new" element={<AdminNodeCreate />} />
+        <Route path="nodes/:id" element={<AdminNodeDetail />} />
+        <Route path="nodes/:id/edit" element={<AdminNodeEdit />} />
+        <Route path="plans" element={<AdminPlans />} />
+        <Route path="plans/new" element={<AdminPlanEdit />} />
+        <Route path="plans/:id/edit" element={<AdminPlanEdit />} />
+        <Route path="products/:id" element={<AdminProductDetail />} />
+        <Route path="images" element={<AdminImages />} />
+        <Route path="users" element={<AdminUsers />} />
+        <Route path="users/new" element={<AdminUserCreate />} />
+        <Route path="users/:id" element={<AdminUserDetail />} />
+        <Route path="realname" element={<AdminRealname />} />
         <Route path="finance" element={<Navigate to="/admin/billing?tab=orders" replace />} />
-        <Route path="billing" element={<Lazy><AdminBilling /></Lazy>} />
-        <Route path="market" element={<Lazy><AdminMarket /></Lazy>} />
-        <Route path="promotions" element={<Lazy><AdminPromotions /></Lazy>} />
-        <Route path="promotions/coupons/:id" element={<Lazy><AdminCouponEdit /></Lazy>} />
+        <Route path="billing" element={<AdminBilling />} />
+        <Route path="billing/invoices/:id" element={<AdminInvoiceDetail />} />
+        <Route path="market" element={<AdminMarket />} />
+        <Route path="promotions" element={<AdminPromotions />} />
+        <Route path="night-market" element={<AdminNightMarket />} />
+        <Route path="promotions/coupons/:id" element={<AdminCouponEdit />} />
         <Route path="payments" element={<Navigate to="/admin/billing?tab=recharge" replace />} />
-        <Route path="announcements" element={<Lazy><AdminAnnouncements /></Lazy>} />
-        <Route path="documents" element={<Lazy><AdminDocuments /></Lazy>} />
-        <Route path="tasks" element={<Lazy><AdminTasks /></Lazy>} />
-        <Route path="tickets" element={<Lazy><Tickets admin /></Lazy>} />
-        <Route path="tickets/:id" element={<Lazy><Tickets admin /></Lazy>} />
-        <Route path="settings" element={<Lazy><AdminSettings /></Lazy>} />
-        <Route path="account" element={<Lazy><Account /></Lazy>} />
-        <Route path="notifications" element={<Lazy><Notifications /></Lazy>} />
+        <Route path="announcements" element={<AdminAnnouncements />} />
+        <Route path="documents" element={<AdminDocuments />} />
+        <Route path="tasks" element={<AdminTasks />} />
+        <Route path="tickets" element={<Tickets admin />} />
+        <Route path="tickets/:id" element={<Tickets admin />} />
+        <Route path="settings" element={<AdminSettings />} />
+        <Route path="account" element={<Account />} />
+        <Route path="notifications" element={<Notifications />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </RouteContent>
+    </Suspense>
     </>
   );
 }

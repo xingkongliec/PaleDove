@@ -45,14 +45,25 @@ export const PING_PROVINCES = [
   ['xj', '新疆', 'Xinjiang'],
 ] as const;
 
+/** 自定义拨测目标可选的省份与地区；新增地区需由管理员填写实际目标地址。 */
+export const PING_REGIONS = [
+  ...PING_PROVINCES,
+  ['hk', '香港', 'Hong Kong'],
+  ['mo', '澳门', 'Macau'],
+  ['tw', '台湾', 'Taiwan'],
+] as const;
+
+export const pingRegionNeedsIsp = (province: string) => PING_PROVINCES.some(region => region[1] === province);
+
 export interface PingTarget {
   /** 如 gd-ct */
   id: string;
   name?: string;
-  /** 省份中文名（与地图数据的省份短名一致） */
+  /** 省份或地区中文名（与地图数据的短名一致） */
   province: string;
   provinceEn: string;
-  isp: PingIsp;
+  /** 港澳台等地区不区分三网运营商。 */
+  isp: PingIsp | null;
   host: string;
   /** ICMP 不可用时 TCP 测速使用的端口 */
   port: number;
@@ -86,13 +97,21 @@ export const PING_TARGETS: PingTarget[] = PING_PROVINCES.flatMap(([code, zh, en]
   PING_ISPS.map((isp) => ({ id: `${code}-${isp.toLowerCase()}`, province: zh, provinceEn: en, isp, host: `${code}-${isp.toLowerCase()}-v4.ip.zstaticcdn.com`, port: 80 })),
 );
 
-export const pingTarget = (id: string, targets: PingTarget[] = PING_TARGETS) => targets.find((t) => t.id === id);
+/** 兼容旧配置与历史快照，地区目标不再沿用之前保存的三网分类。 */
+export const pingTargetIsp = (target: Pick<PingTarget, 'province' | 'isp'>): PingIsp | null => pingRegionNeedsIsp(target.province) ? target.isp ?? null : null;
+
+export function pingTarget(id: string, targets: PingTarget[] = PING_TARGETS): PingTarget | undefined {
+  const target = targets.find(t => t.id === id);
+  return target ? { ...target, isp: pingTargetIsp(target) } : undefined;
+}
 
 /** 单个目标的测试结果：平均延迟（毫秒，全部超时为 null）与丢包率（%） */
 export interface PingResultDTO {
   id: string;
   latency: number | null;
   loss: number;
+  /** 即时 ICMP 实际发送到的 IPv4，用于排除多个域名指向同一目标的情况。 */
+  targetIp?: string;
 }
 
 /** 一台宿主机最近一次的测试结果 */
@@ -119,7 +138,7 @@ export function latencyLevel(latency: number | null | undefined): 0 | 1 | 2 | 3 
 
 export interface PingSummary {
   /** 按省份：三网结果与最低延迟 */
-  provinces: Map<string, { province: string; best: number | null; reachable: number; total: number; byIsp: Partial<Record<PingIsp, PingResultDTO>> }>;
+  provinces: Map<string, { province: string; best: number | null; reachable: number; total: number; byIsp: Partial<Record<PingIsp, PingResultDTO>>; regional: PingResultDTO | null }>;
   /** 按运营商：最快的目标、可达数 / 总数、最慢的可达目标 */
   isps: Record<PingIsp, { fastest: { target: PingTarget; latency: number } | null; slowest: { target: PingTarget; latency: number } | null; reachable: number; total: number }>;
   reachable: number;
@@ -134,19 +153,24 @@ export function summarizePing(results: PingResultDTO[], targets: PingTarget[] = 
   for (const r of results) {
     const target = pingTarget(r.id, targets);
     if (!target) continue;
-    const p = provinces.get(target.province) ?? { province: target.province, best: null, reachable: 0, total: 0, byIsp: {} };
-    const previous = p.byIsp[target.isp];
-    if (!previous || (r.latency !== null && (previous.latency === null || r.latency < previous.latency))) p.byIsp[target.isp] = r;
+    const p = provinces.get(target.province) ?? { province: target.province, best: null, reachable: 0, total: 0, byIsp: {}, regional: null };
+    const previous = target.isp ? p.byIsp[target.isp] : p.regional;
+    if (!previous || (r.latency !== null && (previous.latency === null || r.latency < previous.latency))) {
+      if (target.isp) p.byIsp[target.isp] = r;
+      else p.regional = r;
+    }
     p.total++;
-    const s = isps[target.isp];
-    s.total++;
+    const s = target.isp ? isps[target.isp] : null;
+    if (s) s.total++;
     if (r.latency != null) {
       p.reachable++;
       p.best = p.best === null ? r.latency : Math.min(p.best, r.latency);
-      s.reachable++;
       reachable++;
-      if (!s.fastest || r.latency < s.fastest.latency) s.fastest = { target, latency: r.latency };
-      if (!s.slowest || r.latency > s.slowest.latency) s.slowest = { target, latency: r.latency };
+      if (s) {
+        s.reachable++;
+        if (!s.fastest || r.latency < s.fastest.latency) s.fastest = { target, latency: r.latency };
+        if (!s.slowest || r.latency > s.slowest.latency) s.slowest = { target, latency: r.latency };
+      }
     }
     provinces.set(target.province, p);
   }
@@ -156,7 +180,7 @@ export function summarizePing(results: PingResultDTO[], targets: PingTarget[] = 
 /** 目标列表的摘要：Agent 据此判断目标是否变化 */
 export function pingTargetsHash(targets: PingTarget[] = PING_TARGETS, count = PING_COUNT): string {
   let h = 2166136261;
-  for (const c of JSON.stringify([count, targets.map(t => [t.id, t.host, t.port, t.name ?? '', t.province, t.provinceEn, t.isp])])) {
+  for (const c of JSON.stringify([count, targets.map(t => [t.id, t.host, t.port, t.name ?? '', t.province, t.provinceEn, pingTargetIsp(t)])])) {
     h ^= c.charCodeAt(0);
     h = Math.imul(h, 16777619) >>> 0;
   }
@@ -167,34 +191,70 @@ export function pingTargetsHash(targets: PingTarget[] = PING_TARGETS, count = PI
 // 上架时宿主机 Agent 从实例对外的 IPv4（NAT 为宿主机公网 IP，独立 IPv4 为实例地址）向上面的目标 Ping 一次，
 // 结果作为「上架前拨测快照」存档在商品上，买卖双方都能查看。
 
-/** 超过这么多个省份无法 Ping 通时判定 IP 异常 */
-export const MARKET_PING_MAX_FAILED_PROVINCES = 5;
+/** 境外对照目标仅验证同一源地址的公网连通性，不参与国内线路统计。 */
+export const MARKET_PING_CONTROLS = [
+  { id: 'control-cloudflare', host: '1.1.1.1', port: 443 },
+  { id: 'control-google', host: '8.8.8.8', port: 443 },
+  { id: 'control-quad9', host: '9.9.9.9', port: 443 },
+] as const;
 
-/** 拨测结论：NORMAL 全部可达（IP 正常）；PARTIAL 部分目标超时；ABNORMAL 超过 5 个省份无法 Ping 通（IP 异常） */
-export type MarketPingVerdict = 'NORMAL' | 'PARTIAL' | 'ABNORMAL';
+/** 异常仅用于两轮国内三网全不通、同期境外对照可达的疑似屏蔽；证据不足为 UNKNOWN。 */
+export type MarketPingVerdict = 'NORMAL' | 'PARTIAL' | 'ABNORMAL' | 'UNKNOWN';
 export type MarketPingStatus = 'PENDING' | 'DONE' | 'FAILED';
 /** 未能拨测的原因：agent 宿主机 Agent 不在线或版本过旧；timeout 超时未回传；noIpv4 实例没有 IPv4；start 独立 IPv4 实例无法开机；error Agent 报错 */
 export type MarketPingReason = 'agent' | 'timeout' | 'noIpv4' | 'start' | 'error';
 /** 发送方式：local 绑定本机地址；default 宿主机默认出口；spoof 以实例 IP 为源；spoof-l2 以实例 IP 与 MAC 为源；mock 模拟节点 */
 export type MarketPingVia = 'local' | 'default' | 'spoof' | 'spoof-l2' | 'mock';
 
-/**
- * 判定拨测结论：某个省份有目标（任一运营商）完全不通即计为「无法 Ping 通的省份」。
- * 全部目标可达为正常；无法 Ping 通的省份超过 5 个为异常；其余为部分超时。
- */
-export function marketPingVerdict(results: PingResultDTO[], targets: PingTarget[] = PING_TARGETS): { verdict: MarketPingVerdict; failedProvinces: string[]; reachable: number; total: number } {
-  const failed = new Set<string>();
-  let reachable = 0;
-  let total = 0;
+export interface MarketPingVerification {
+  /** 第二轮真实 ICMP 结果。 */
+  results: PingResultDTO[];
+  controls: PingResultDTO[];
+  confirmationControls: PingResultDTO[];
+}
+
+const pingReplied = (r: PingResultDTO) => r.latency !== null && Number.isFinite(r.latency) && r.latency >= 0 && r.loss < 100;
+const validPingResult = (r: PingResultDTO & { error?: string }) => !r.error && Number.isFinite(r.loss) && r.loss >= 0 && r.loss <= 100
+  && (r.latency === null ? r.loss === 100 : pingReplied(r));
+
+function pingResultsById(results: PingResultDTO[], targets: readonly { id: string }[]): Map<string, PingResultDTO> {
+  const unique = new Map<string, PingResultDTO>();
+  const seen = new Set<string>();
   for (const r of results) {
-    const target = pingTarget(r.id, targets);
-    if (!target) continue;
-    total++;
-    if (r.latency == null) failed.add(target.province);
-    else reachable++;
+    if (!targets.some(t => t.id === r.id)) continue;
+    if (seen.has(r.id)) unique.delete(r.id);
+    else if (validPingResult(r)) unique.set(r.id, r);
+    seen.add(r.id);
   }
-  const failedProvinces = [...failed];
-  const verdict: MarketPingVerdict = total > 0 && reachable === total ? 'NORMAL' : failedProvinces.length > MARKET_PING_MAX_FAILED_PROVINCES || reachable === 0 ? 'ABNORMAL' : 'PARTIAL';
+  return unique;
+}
+
+/** 至少三个大陆省份、三网各两个独立目标全部超时，才有资格进入屏蔽复核。 */
+export function marketPingBlockCandidate(results: PingResultDTO[], targets: PingTarget[]): boolean {
+  const unique = pingResultsById(results, targets);
+  if (!targets.length || targets.some(t => !unique.has(t.id))) return false;
+  const mainland = targets.filter(t => pingRegionNeedsIsp(t.province) && t.isp);
+  const address = (t: PingTarget) => unique.get(t.id)!.targetIp;
+  return mainland.every(t => address(t)) && new Set(mainland.map(address)).size >= 6 && new Set(mainland.map(t => t.province)).size >= 3
+    && PING_ISPS.every(isp => new Set(mainland.filter(t => t.isp === isp).map(address)).size >= 2)
+    && mainland.every(t => !pingReplied(unique.get(t.id)!));
+}
+
+/** 部分超时不代表被墙；历史快照和不完整的测试不能提供屏蔽结论。 */
+export function marketPingVerdict(results: PingResultDTO[], targets: PingTarget[] = PING_TARGETS, verification?: MarketPingVerification): { verdict: MarketPingVerdict; failedProvinces: string[]; reachable: number; total: number } {
+  const unique = pingResultsById(results, targets);
+  const rows = [...unique.values()];
+  const reachable = rows.filter(pingReplied).length;
+  const total = rows.length;
+  const failedProvinces = [...new Set(targets.filter(t => pingRegionNeedsIsp(t.province)).map(t => t.province))]
+    .filter(province => targets.filter(t => t.province === province).every(t => unique.has(t.id) && !pingReplied(unique.get(t.id)!)));
+  const controlOK = (controls: PingResultDTO[]) => new Set([...pingResultsById(controls, MARKET_PING_CONTROLS).values()]
+    .filter(r => MARKET_PING_CONTROLS.some(t => t.id === r.id && t.host === r.targetIp) && pingReplied(r)).map(r => r.id));
+  const firstControls = controlOK(verification?.controls ?? []);
+  const stableControls = [...controlOK(verification?.confirmationControls ?? [])].filter(id => firstControls.has(id));
+  const mainlandReply = rows.some(r => pingRegionNeedsIsp(pingTarget(r.id, targets)!.province) && pingReplied(r));
+  let verdict: MarketPingVerdict = total > 0 && total === targets.length && reachable === total ? 'NORMAL' : reachable > 0 ? 'PARTIAL' : 'UNKNOWN';
+  if (!mainlandReply && verification && stableControls.length >= 2 && marketPingBlockCandidate(rows, targets) && marketPingBlockCandidate(verification.results, targets)) verdict = 'ABNORMAL';
   return { verdict, failedProvinces, reachable, total };
 }
 

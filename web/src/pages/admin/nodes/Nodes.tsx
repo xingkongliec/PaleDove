@@ -76,6 +76,7 @@ export default function AdminNodes() {
           <DataTable
             rows={q.data}
             loading={q.isLoading}
+            refreshing={q.isFetching}
             rowKey={(n) => n.id}
             onRowClick={(n) => navigate(`/admin/nodes/${n.id}`)}
             empty={

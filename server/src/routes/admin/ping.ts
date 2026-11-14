@@ -2,14 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { PING_ISPS, PING_PROVINCES } from '../../shared/index.ts';
+import { PING_ISPS, PING_REGIONS, pingRegionNeedsIsp, pingTargetIsp } from '../../shared/index.ts';
 import { adminGuard, logActivity, parse, requireAdmin } from '../../lib/http.ts';
 import { badRequest, notFound } from '../../lib/errors.ts';
 import { m, t } from '../../i18n/index.ts';
 import { adminPingSettings, changePingObject, updatedTarget, updatePingSettings } from '../../services/ping-settings.ts';
 
 const hostSchema = z.string().trim().toLowerCase().max(253).refine(host => isIP(host) === 4 || (!/^[\d.]+$/.test(host) && host.includes('.') && host.split('.').every(part => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(part))), m('probe.invalidHost'));
-const targetSchema = z.object({ name: z.string().trim().max(80).default(''), province: z.string().refine(value => PING_PROVINCES.some(province => province[1] === value), m('probe.invalidProvince')), isp: z.enum(PING_ISPS), host: hostSchema, port: z.number().int().min(1).max(65535), enabled: z.boolean() });
+const targetSchema = z.object({
+  name: z.string().trim().max(80).default(''),
+  province: z.string().refine(value => PING_REGIONS.some(region => region[1] === value), m('probe.invalidProvince')),
+  isp: z.enum(PING_ISPS).nullish(),
+  host: hostSchema,
+  port: z.number().int().min(1).max(65535),
+  enabled: z.boolean(),
+}).refine(value => !pingRegionNeedsIsp(value.province) || value.isp != null, { path: ['isp'], message: m('probe.ispRequired') });
 const idOf = (params: unknown) => parse(z.object({ id: z.string().max(32) }), params).id;
 
 export default async function adminPingRoutes(app: FastifyInstance) {
@@ -24,7 +31,7 @@ export default async function adminPingRoutes(app: FastifyInstance) {
   for (const method of ['POST', 'PATCH'] as const) app.route({ method, url: method === 'POST' ? '/api/admin/ping/targets' : '/api/admin/ping/targets/:id', handler: async req => {
     const input = parse(targetSchema, req.body);
     const id = method === 'POST' ? `custom-${randomUUID().slice(0, 16)}` : idOf(req.params);
-    const target = { ...input, id, provinceEn: PING_PROVINCES.find(province => province[1] === input.province)![2] };
+    const target = { ...input, id, isp: pingTargetIsp({ province: input.province, isp: input.isp ?? null }), provinceEn: PING_REGIONS.find(region => region[1] === input.province)![2] };
     await updatePingSettings(current => {
       if (method === 'POST' && current.targets.length >= 200) throw badRequest(t('probe.targetLimit'));
       if (current.targets.some(item => item.id !== id && item.host === input.host && item.port === input.port)) throw badRequest(t('probe.duplicateTarget'));

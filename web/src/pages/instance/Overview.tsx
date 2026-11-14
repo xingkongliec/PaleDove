@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowDownUp, Cpu, HardDrive, Megaphone, MemoryStick, Network } from 'lucide-react';
+import { ArrowDownUp, Cpu, HardDrive, LoaderCircle, Megaphone, MemoryStick, Network } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { isNatType, type CredentialsDTO, type InstanceStateDTO, type InvoiceDTO } from '../../shared/index';
@@ -14,9 +14,10 @@ import { cn } from '@/lib/cn';
 import { copyText, daysLeft, daysLeftText, formatBandwidth, formatBytes, formatCores, formatDate, formatMemory, formatMoney, formatRate, formatTraffic } from '@/lib/format';
 import { useCurrency, useMe, usePublicConfig } from '@/lib/queries';
 import { toast } from '@/lib/toast';
+import { useCreateInvoice } from '@/hooks/create-invoice';
 import { TransferDialog } from './TransferDialog';
 
-/** 卡片标题（incudal：text-sm 中等字重，下方留 1rem） */
+/** 卡片标题：text-sm 中等字重，下方留 1rem */
 function CardTitle({ title, extra }: { title: ReactNode; extra?: ReactNode }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3">
@@ -26,7 +27,7 @@ function CardTitle({ title, extra }: { title: ReactNode; extra?: ReactNode }) {
   );
 }
 
-/** 胶囊标签（incudal 订阅卡片顶部的标签） */
+/** 订阅卡片顶部的胶囊标签 */
 function Chip({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap', className)}>{children}</span>;
 }
@@ -181,7 +182,7 @@ function SubscriptionCard({ inst, admin, onRenew }: { inst: AnyInstance; admin?:
 
 // ───────────── 基本信息 ─────────────
 
-/** 文字按钮（incudal 的「显示 / 复制」） */
+/** 「显示 / 复制」文字按钮 */
 function TextButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button type="button" onClick={onClick} className="shrink-0 text-xs text-info-text transition-opacity hover:opacity-75">
@@ -302,7 +303,7 @@ function Bar({ id, pct, color, hidden }: { id: string; pct: number; color: strin
 }
 
 const pctText = (p: number) => `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
-/** incudal 的阈值配色：内存 / 磁盘超过 80% 红色、60% 黄色；流量 100% 红色、80% 黄色 */
+/** 阈值配色：内存 / 磁盘超过 80% 红色、60% 黄色；流量 100% 红色、80% 黄色 */
 const usageColor = (p: number, normal: string) => (p > 80 ? 'bg-danger' : p > 60 ? 'bg-warning' : normal);
 const trafficColor = (p: number) => (p >= 100 ? 'bg-danger' : p >= 80 ? 'bg-warning' : 'bg-metric-cpu');
 
@@ -326,19 +327,14 @@ function UsageRow({ icon, label, note, value, pct, children }: { icon: ReactNode
   );
 }
 
-/** 付费重置流量：确认价格后从余额扣款，清零本周期已用流量（重置日不变）；管理员在「管理」里直接重置 */
+/** 付费重置流量先生成账单，支付后清零本周期用量；管理员在「管理」里直接重置。 */
 function TrafficReset({ inst }: { inst: AnyInstance }) {
   const { t } = useI18n();
   const currency = useCurrency();
   const confirm = useConfirm();
-  const navigate = useNavigate();
   const { data: me } = useMe();
-  const reset = useMutation({
+  const reset = useCreateInvoice({
     mutationFn: () => api.post<{ invoice: InvoiceDTO }>(`/instances/${inst.id}/reset-traffic`),
-    onSuccess: (r) => {
-      toast.success(t('invoice.created'), r.invoice.no);
-      navigate('/console/invoices');
-    },
     onError: (e) => toast.fromError(e),
   });
   if (me?.role === 'ADMIN' || inst.traffic <= 0 || inst.trafficResetPrice === null) return null;
@@ -347,13 +343,15 @@ function TrafficReset({ inst }: { inst: AnyInstance }) {
     <button
       type="button"
       disabled={reset.isPending}
-      className="font-medium text-fg-2 underline decoration-line-strong underline-offset-2 transition-colors hover:text-fg hover:decoration-fg disabled:opacity-50"
+      aria-busy={reset.isPending || undefined}
+      className="inline-grid items-center font-medium text-fg-2 underline decoration-line-strong underline-offset-2 transition-colors hover:text-fg hover:decoration-fg disabled:opacity-50"
       onClick={async () => {
         if (await confirm({ title: t('overview.trafficResetTitle'), description: t('overview.trafficResetDesc', { price, balance: formatMoney(me?.balance ?? 0, currency) }), confirmText: t('overview.trafficResetConfirm', { price }) }))
           reset.mutate();
       }}
     >
-      {t('overview.trafficResetButton', { price })}
+      <span className={cn('col-start-1 row-start-1', reset.isPending && 'invisible')} aria-hidden={reset.isPending || undefined}>{t('overview.trafficResetButton', { price })}</span>
+      <span className={cn('col-start-1 row-start-1 inline-flex items-center gap-1', !reset.isPending && 'invisible')} aria-hidden={!reset.isPending || undefined}><LoaderCircle className={cn('size-3', reset.isPending && 'animate-spin')} aria-hidden />{reset.loadingText}</span>
     </button>
   );
 }
@@ -362,7 +360,7 @@ function UsageCard({ inst }: { inst: AnyInstance }) {
   const instancePath = useInstanceApiPath(inst.id);
   const { t, L } = useI18n();
   const available = ['RUNNING', 'STOPPED', 'SUSPENDED', 'ERROR'].includes(inst.status);
-  // 刷新节奏参考 incudal：运行中每 5 秒刷新资源，停机 / 暂停时只取一次；标签页隐藏时暂停，切回来立即刷新
+  // 运行中每 5 秒刷新资源，停机 / 暂停时只取一次；标签页隐藏时暂停，切回来立即刷新
   const state = useQuery({
     queryKey: ['instance-state', inst.id],
     queryFn: () => api.get<InstanceStateDTO>(`${instancePath}/state`),
@@ -517,13 +515,13 @@ function HostAnnouncement({ inst }: { inst: AnyInstance }) {
   );
 }
 
-/** 概览（与 incudal 一致）：宿主机公告（有时）、订阅卡片，下方基本信息与资源占用并排 */
+/** 概览：宿主机公告（有时）、订阅卡片，下方基本信息与资源占用并排 */
 export default function Overview({ inst, admin, onRenew }: { inst: AnyInstance; admin?: boolean; onRenew: () => void }) {
   return (
     <div className="space-y-4">
       <HostAnnouncement inst={inst} />
       <SubscriptionCard inst={inst} admin={admin} onRenew={onRenew} />
-      {/* 基本信息与资源占用：md 起两列（与 incudal 一致） */}
+      {/* 基本信息与资源占用：md 起两列 */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <BasicsCard inst={inst} />
         <UsageCard inst={inst} />

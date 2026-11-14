@@ -56,9 +56,6 @@ ARCH=$(dpkg --print-architecture)
 info "安装基础依赖 / installing base packages"
 apt-get update -y -qq
 apt-get install -y -qq curl ca-certificates gnupg jq openssl iproute2 util-linux >/dev/null
-if [ "$NONINTERACTIVE" != 1 ] && [ "$UI_TEXT_ONLY" != 1 ] && ! command -v whiptail >/dev/null 2>&1; then
-  apt-get install -y -qq whiptail >/dev/null 2>&1 || warn '菜单组件不可用，使用文本菜单'
-fi
 configure_installation
 
 # Persist a token-free maintenance entry even when this installer was piped to bash.
@@ -68,6 +65,7 @@ cat > "$MANAGER_FILE" <<'PALEDOVE_NODE_MANAGEMENT'
 PALEDOVE_NODE_MANAGEMENT
 chmod 755 "$MANAGER_FILE"
 mv -f "$MANAGER_FILE" /usr/local/sbin/paledove-node
+ln -sfnT -- /usr/local/sbin/paledove-node /usr/local/bin/paledove
 
 install_incus_zabbly() {
   mkdir -p /etc/apt/keyrings
@@ -364,4 +362,4 @@ else
   warn "无法回调面板（$PANEL_URL），请回到面板点击「验证并连接」/ could not reach the panel, click \"Verify & connect\" in the panel"
 fi
 info "安装完成，请确认面板可以访问本机 TCP $API_PORT 端口 / done, make sure the panel can reach TCP $API_PORT"
-info '本地卸载菜单：sudo paledove-node（不需要面板令牌）'
+info '节点管理快捷命令：sudo paledove（兼容 paledove-node，不需要面板令牌）'

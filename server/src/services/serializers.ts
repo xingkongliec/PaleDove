@@ -10,6 +10,7 @@ import type {
   ImageDTO,
   InvoiceDTO,
   InvoicePurchaseConfigDTO,
+  DiscountSource,
   InstanceDTO,
   IpAddressDTO,
   MeDTO,
@@ -364,6 +365,7 @@ export function toInstance(inst: InstanceWithRelations): InstanceDTO {
     billingCycle: inst.billingCycle,
     price: money(inst.price),
     renewPrice: money(renewalPrice(inst)),
+    nightRenewPrice: inst.nightRenewPrice !== null ? money(inst.nightRenewPrice) : null,
     renewCoupon: inst.coupon ? { code: inst.coupon.code, name: inst.coupon.name } : null,
     vpc: inst.vpc && inst.vpcIp ? { id: inst.vpc.id, name: inst.vpc.name, ip: inst.vpcIp } : null,
     marketListing: inst.marketListings[0] ? { id: inst.marketListings[0].id, price: money(inst.marketListings[0].price) } : null,
@@ -424,6 +426,12 @@ export const orderInclude = {
   plan: { select: { name: true, product: { select: { name: true } } } },
 } satisfies Prisma.OrderInclude;
 
+export function discountSource(discount: Decimalish, source?: string | null, couponCode?: string | null): DiscountSource | null {
+  if (!discount || !discount.gt(0)) return null;
+  if (source === 'NIGHT_MARKET' || source === 'COUPON') return source;
+  return couponCode ? 'COUPON' : 'OTHER';
+}
+
 export function toOrder(
   o: Order & {
     user?: Pick<User, 'id' | 'username'>;
@@ -438,6 +446,7 @@ export function toOrder(
     cycle: o.cycle,
     amount: money(o.amount),
     discount: money(o.discount),
+    discountSource: discountSource(o.discount, o.discountSource, o.couponCode),
     couponCode: o.couponCode,
     status: o.status,
     description: o.description,
@@ -453,9 +462,11 @@ export function toInvoice(
   i: Invoice & {
     instance?: Pick<Instance, 'hostname' | 'type'> | null;
     plan?: { name: string; product: { name: string } } | null;
+    user?: { id: number; username: string; email: string };
   },
 ): InvoiceDTO {
-  const payload = i.payload as { purchaseConfig?: InvoicePurchaseConfigDTO } | null;
+  const payload = i.payload as { purchaseConfig?: InvoicePurchaseConfigDTO; nightMarket?: InvoiceDTO['nightMarket']; discountSource?: string; couponCode?: string; appliedCouponCode?: string } | null;
+  const couponCode = payload?.appliedCouponCode ?? payload?.couponCode ?? null;
   return {
     id: i.id,
     no: i.no,
@@ -463,11 +474,15 @@ export function toInvoice(
     status: i.status,
     amount: money(i.amount),
     discount: money(i.discount),
+    discountSource: discountSource(i.discount, i.discountSource ?? payload?.discountSource ?? (payload?.nightMarket ? 'NIGHT_MARKET' : null), couponCode),
+    couponCode,
     description: i.description,
     instanceId: i.instanceId,
     instance: i.instance ? { hostname: i.instance.hostname, type: i.instance.type } : null,
     plan: i.plan ? { name: i.plan.name, product: i.plan.product.name } : null,
     purchaseConfig: i.type === 'PURCHASE' ? payload?.purchaseConfig ?? null : null,
+    nightMarket: payload?.nightMarket ?? null,
+    ...(i.user ? { user: { id: i.user.id, username: i.user.username, email: i.user.email } } : {}),
     expiresAt: iso(i.expiresAt),
     paidAt: iso(i.paidAt),
     createdAt: i.createdAt.toISOString(),
@@ -521,6 +536,7 @@ export async function toBalanceLogs(rows: Array<BalanceLog & { user?: Pick<User,
               type: o.instance?.type ?? null,
               amount: money(o.amount),
               discount: money(o.discount),
+              discountSource: discountSource(o.discount, o.discountSource, o.couponCode),
               couponCode: o.couponCode,
             },
           }

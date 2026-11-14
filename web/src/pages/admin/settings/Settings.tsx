@@ -16,29 +16,31 @@ import { PanelCertificateCard } from './PanelCertificate';
 import { MailSettingsCard } from './MailSettings';
 import { LogoMark } from '@/layouts/AppShell';
 import { MaintenanceSettingsCard } from './MaintenanceSettings';
-import { PayChannels } from './PayChannels';
+import { PopupSettingsCard } from './PopupSettings';
+import { AffRecords } from './AffRecords';
 
-type Tab = 'site' | 'mail' | 'payment' | 'maintenance' | 'lifecycle' | 'aff' | 'market' | 'sites' | 'oauth' | 'cert' | 'general';
-const TABS: Tab[] = ['site', 'mail', 'payment', 'maintenance', 'lifecycle', 'aff', 'market', 'sites', 'oauth', 'cert', 'general'];
+type Tab = 'site' | 'mail' | 'maintenance' | 'lifecycle' | 'aff' | 'market' | 'sites' | 'oauth' | 'cert' | 'general' | 'popups';
+const TABS: Tab[] = ['site', 'mail', 'maintenance', 'lifecycle', 'aff', 'market', 'sites', 'oauth', 'cert', 'popups', 'general'];
 
 /** 系统设置：按类别分标签，每个标签单独保存；标签写在地址栏（?tab=），可直接链接 */
 export default function AdminSettings() {
   const t = useT();
   const [params, setParams] = useSearchParams();
-  const q = useQuery({ queryKey: ['admin-settings'], queryFn: () => api.get<AdminSettingsDTO>('/admin/settings') });
-  const raw = params.get('tab') as Tab | null;
-  if (params.get('tab') === 'legal') return <Navigate to="/admin/documents" replace />;
-  const tab: Tab = raw && TABS.includes(raw) ? raw : 'site';
+  const raw = params.get('tab');
+  const q = useQuery({ queryKey: ['admin-settings'], queryFn: () => api.get<AdminSettingsDTO>('/admin/settings'), enabled: raw !== 'payment' });
+  if (raw === 'payment') return <Navigate to="/admin/billing?tab=payment" replace />;
+  if (raw === 'legal') return <Navigate to="/admin/documents" replace />;
+  const tab = TABS.find((value) => value === raw) ?? 'site';
   if (!q.data) return q.error ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : <PageLoading />;
   const data = q.data;
   const content: Record<Tab, ReactNode> = {
     site: <SiteSettingsCard value={data} />,
     mail: <MailSettingsCard />,
-    payment: <PayChannels />,
     maintenance: <MaintenanceSettingsCard />,
+    popups: <PopupSettingsCard />,
     general: <GeneralSettingsCard value={data} />,
     lifecycle: <LifecycleSettings value={data} />,
-    aff: <AffSettings value={data} />,
+    aff: <div className="space-y-4"><AffSettings value={data} /><AffRecords /></div>,
     market: <MarketSettings value={data} />,
     sites: <SiteBindingSettings value={data} />,
     oauth: <OAuthSettings />,
@@ -54,7 +56,6 @@ export default function AdminSettings() {
         items={[
           { value: 'site', label: t('adminSettings.tab.site') },
           { value: 'mail', label: t('adminSettings.tab.mail') },
-          { value: 'payment', label: t('adminSettings.tab.payment') },
           { value: 'maintenance', label: t('maintenance.title') },
           { value: 'lifecycle', label: t('adminSettings.lifecycle') },
           { value: 'aff', label: t('adminSettings.tab.aff') },
@@ -62,6 +63,7 @@ export default function AdminSettings() {
           { value: 'sites', label: t('adminSettings.tab.sites') },
           { value: 'oauth', label: t('oauthAdmin.title') },
           { value: 'cert', label: t('adminSettings.tab.cert') },
+          { value: 'popups', label: t('popup.tab') },
           { value: 'general', label: t('adminSettings.tab.general') },
         ]}
       />

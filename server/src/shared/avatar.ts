@@ -1,4 +1,4 @@
-// 头像（参考 incudal）：由 DiceBear 按种子生成，用户可在账户设置里选择风格；API 地址由管理员在系统设置中配置。
+// 头像：由 DiceBear 按种子生成，用户可在账户设置里选择风格；API 地址由管理员在系统设置中配置。
 // 种子为邮箱的 md5（服务端计算后下发），同一用户的头像保持不变，也不会把明文邮箱发给第三方。
 
 export const DEFAULT_AVATAR_API = 'https://api.dicebear.com/9.x';

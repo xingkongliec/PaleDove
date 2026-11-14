@@ -21,6 +21,7 @@ import passwordResetRoutes from './routes/password-reset.ts';
 import settingsOperationsRoutes, { publicLegalRoutes } from './routes/settings-operations.ts';
 import documentRoutes, { publicDocumentRoutes } from './routes/documents.ts';
 import adminBillingRoutes from './routes/admin/billing.ts';
+import adminAffRoutes from './routes/admin/aff.ts';
 import adminPromotionRoutes from './routes/admin/promotions.ts';
 import adminCatalogRoutes from './routes/admin/catalog.ts';
 import adminInstanceRoutes from './routes/admin/instances.ts';
@@ -45,6 +46,7 @@ import ticketRoutes from './routes/tickets.ts';
 import { adminPaymentRoutes, paymentRoutes, paymentWebhookRoutes } from './routes/payments.ts';
 import storeRoutes, { notificationRoutes } from './routes/store.ts';
 import invoiceRoutes from './routes/invoices.ts';
+import nightMarketRoutes, { adminNightMarketRoutes } from './routes/night-market.ts';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -136,6 +138,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(paymentWebhookRoutes);
   await app.register(storeRoutes);
   await app.register(invoiceRoutes);
+  await app.register(nightMarketRoutes);
+  await app.register(adminNightMarketRoutes);
   await app.register(notificationRoutes);
   await app.register(instanceRoutes);
   await app.register(instanceDetailRoutes, { prefix: '/api/admin/instances', admin: true });
@@ -146,6 +150,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminSiteRoutes);
   await app.register(adminPaymentRoutes);
   await app.register(adminBillingRoutes);
+  await app.register(adminAffRoutes);
   await app.register(adminPromotionRoutes);
   await app.register(adminCatalogRoutes);
   await app.register(adminInstanceRoutes);

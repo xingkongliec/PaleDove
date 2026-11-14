@@ -355,7 +355,7 @@ export default async function adminNodeRoutes(app: FastifyInstance) {
       agentLatestVersion: Object.keys(manifest.files).length ? manifest.version : null };
   });
 
-  // 宿主机 Agent 的安装命令（参考 incudal）：每次生成都签发新的一次性安装令牌（30 分钟内有效、只能使用一次），
+  // 宿主机 Agent 的安装命令：每次生成都签发新的一次性安装令牌（30 分钟内有效、只能使用一次），
   // 安装脚本是通用的、不含密钥，令牌通过环境变量传入；安装时宿主机生成新的 Agent 密钥
   app.post('/api/admin/nodes/:id/agent-command', async (req) => {
     const admin = requireAdmin(req);

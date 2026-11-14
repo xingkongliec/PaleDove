@@ -76,7 +76,7 @@ export default function AccountPage() {
         className="mb-4"
         items={sections.map((x) => ({ value: x.value, label: x.label, icon: x.icon }))}
       />
-      <section key={cur.value} className="page-enter min-w-0">
+      <section key={cur.value} className="panel-enter min-w-0">
         {cur.content}
       </section>
     </div>
@@ -134,7 +134,7 @@ function ProfileCard({ user }: { user: MeDTO }) {
 const VARIANT_PAGE = 8;
 
 /**
- * 头像（参考 incudal）：左侧大图预览；右侧上面选择风格，下面选择该风格下的形象（可换一批），保存后全站生效
+ * 头像：左侧大图预览；右侧上面选择风格，下面选择该风格下的形象（可换一批），保存后全站生效
  */
 function AvatarCard({ user }: { user: MeDTO }) {
   const t = useT();

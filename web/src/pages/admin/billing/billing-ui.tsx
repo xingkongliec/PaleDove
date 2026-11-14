@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { DiscountSource } from '@/shared/index';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { formatMoney } from '@/lib/format';
@@ -18,12 +19,12 @@ export function BillingMetrics({ items, busy, className }: { items: { label: Rea
   );
 }
 
-export function DiscountCell({ discount, code, currency }: { discount: string; code: string | null; currency: string }) {
+export function DiscountCell({ discount, source, code, currency }: { discount: string; source: DiscountSource | null; code: string | null; currency: string }) {
   const { t } = useI18n();
   return Number(discount) > 0 ? (
     <div className="md:text-right">
       <div className="tabular whitespace-nowrap text-success-text">-{formatMoney(discount, currency)}</div>
-      <div className="mt-1 text-xs break-all text-fg-3">{code ?? t('billingAdmin.noCouponCode')}</div>
+      <div className="mt-1 text-xs break-all text-fg-3">{t(source === 'NIGHT_MARKET' ? 'billingAdmin.nightDiscount' : source === 'COUPON' ? 'billingAdmin.couponDiscount' : 'billingAdmin.otherDiscount')}{source === 'COUPON' && code ? ` · ${code}` : ''}</div>
     </div>
   ) : (
     <span className="block text-fg-4 md:text-right">—</span>

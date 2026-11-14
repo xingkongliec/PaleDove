@@ -46,9 +46,9 @@ export function discountOf(coupon: Pick<Coupon, 'type' | 'value' | 'maxDiscount'
 /** 循环抵扣：每一期都按一期价格减免 */
 export const recurringDiscount = (coupon: Pick<Coupon, 'type' | 'value' | 'maxDiscount'>, unitPrice: Prisma.Decimal, periods: number) => discountOf(coupon, unitPrice).mul(periods);
 
-/** 实例每期实际续费价格：绑定了循环抵扣的优惠码时扣除每期减免 */
-export const renewalPrice = (inst: { price: Prisma.Decimal; coupon?: Pick<Coupon, 'type' | 'value' | 'maxDiscount'> | null }) =>
-  inst.coupon ? inst.price.minus(recurringDiscount(inst.coupon, inst.price, 1)) : inst.price;
+/** 实例每期实际续费价：夜市循环价优先，否则使用绑定的循环优惠码。 */
+export const renewalPrice = (inst: { price: Prisma.Decimal; nightRenewPrice?: Prisma.Decimal | null; coupon?: Pick<Coupon, 'type' | 'value' | 'maxDiscount'> | null }) =>
+  inst.nightRenewPrice ?? (inst.coupon ? inst.price.minus(recurringDiscount(inst.coupon, inst.price, 1)) : inst.price);
 
 /** 校验优惠码能否用于这笔订单并计算减免金额；不能使用时抛出 400 并说明原因 */
 export async function quoteCoupon(db: Db, rawCode: string, target: CouponTarget): Promise<{ coupon: Coupon; discount: Prisma.Decimal }> {

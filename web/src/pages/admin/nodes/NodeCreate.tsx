@@ -9,7 +9,7 @@ import { useI18n } from '@/i18n';
 import { api, errorText } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { NodeInstallSteps } from './InstallCommand';
-import { FormFooter, HostFields, hostPayload, InstallOptionsFields, NetworkFields, NODE_NAME, nodeToForm } from './NodeForm';
+import { FormFooter, HostFields, hostPayload, NetworkFields, NODE_NAME, nodeToForm } from './NodeForm';
 
 /** 生成安装脚本后：执行脚本 → 验证并连接；等待期间轮询安装脚本的回调结果 */
 function InstallStage({ created }: { created: { node: NodeDTO; install: InstallCommandDTO } }) {
@@ -92,7 +92,6 @@ export default function AdminNodeCreate() {
         <Card className="overflow-hidden">
           <HostFields value={form} onChange={setForm} />
           <NetworkFields value={form} onChange={setForm} />
-          <InstallOptionsFields value={form} onChange={setForm} />
           <FormFooter>
             {error && <span className="mr-auto text-sm text-danger-text">{error}</span>}
             <LinkButton to="/admin/nodes">{t('common.cancel')}</LinkButton>

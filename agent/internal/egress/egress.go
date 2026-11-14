@@ -22,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -47,6 +46,7 @@ const (
 	egressGatewayPortBase = 42000
 	// 没有配置变化时，定期刷新状态的间隔
 	egressStatusEvery = time.Minute
+	egressRetryEvery  = time.Minute
 	// WireGuard 握手超过这个时间视为断开
 	egressHandshakeStale = 3 * time.Minute
 )
@@ -119,6 +119,13 @@ type Manager struct {
 	run     func(name string, args ...string) (string, error)
 	running atomic.Bool
 	last    time.Time
+	// 失败的配置保留并限频重试，不能标记成已应用。
+	attempted    int
+	lastAttempt  time.Time
+	applyError   error
+	installTools func([]string) error
+	toolsAttempt time.Time
+	toolsError   error
 	// 代理连通性检测与网关启动（测试中替换）
 	probe        func(host string, port int) (time.Duration, error)
 	startGateway func(port int, def egressDef) (*proxyGateway, error)
@@ -126,17 +133,13 @@ type Manager struct {
 
 func New() *Manager {
 	return &Manager{
-		applied:  -1,
-		wgHash:   map[string]string{},
-		gateways: map[int]*proxyGateway{},
-		dir:      "/run/paledove/egress",
-		run: func(name string, args ...string) (string, error) {
-			out, err := exec.Command(name, args...).CombinedOutput()
-			if err != nil {
-				return string(out), fmt.Errorf("%s %s：%v %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-			}
-			return string(out), nil
-		},
+		applied:      -1,
+		attempted:    -1,
+		wgHash:       map[string]string{},
+		gateways:     map[int]*proxyGateway{},
+		dir:          "/run/paledove/egress",
+		run:          runHostCommand,
+		installTools: installEgressTools,
 		startGateway: startProxyGateway,
 		probe: func(host string, port int) (time.Duration, error) {
 			start := time.Now()
@@ -152,14 +155,15 @@ func New() *Manager {
 
 // MaybeSync 收到心跳回复后调用：版本变化时拉取并应用配置，否则定期刷新状态（在后台进行）
 func (m *Manager) MaybeSync(ctx context.Context, c *panel.Client, hint *Hint) {
-	if hint == nil {
+	if hint == nil || !m.running.CompareAndSwap(false, true) {
 		return
 	}
 	m.mu.Lock()
-	changed := hint.Version != m.applied
+	changed := m.needsApply(hint.Version)
 	due := time.Since(m.last) >= egressStatusEvery && m.current != nil && m.current.Enabled
 	m.mu.Unlock()
-	if (!changed && !due) || !m.running.CompareAndSwap(false, true) {
+	if !changed && !due {
+		m.running.Store(false)
 		return
 	}
 	go func() {
@@ -168,6 +172,11 @@ func (m *Manager) MaybeSync(ctx context.Context, c *panel.Client, hint *Hint) {
 			logx.Once("egress:"+err.Error(), "智能分流同步失败：%v", err)
 		}
 	}()
+}
+
+// m.mu must be held by the caller.
+func (m *Manager) needsApply(version int) bool {
+	return version != m.applied && (version != m.attempted || time.Since(m.lastAttempt) >= egressRetryEvery)
 }
 
 func (m *Manager) sync(ctx context.Context, c *panel.Client, fetch bool) error {
@@ -191,11 +200,12 @@ func (m *Manager) sync(ctx context.Context, c *panel.Client, fetch bool) error {
 	}
 	m.mu.Lock()
 	cfg := m.current
+	applyErr := m.applyError
 	m.mu.Unlock()
 	if cfg == nil {
 		return nil
 	}
-	return m.report(ctx, c, cfg, nil)
+	return m.report(ctx, c, cfg, applyErr)
 }
 
 func (m *Manager) report(ctx context.Context, c *panel.Client, cfg *egressConfig, applyErr error) error {
@@ -286,10 +296,20 @@ func splitList(s string) []string {
 }
 
 // apply 按配置整体重建；返回的错误为整体错误，单个出口的问题记在状态里
-func (m *Manager) apply(cfg *egressConfig) error {
+func (m *Manager) apply(cfg *egressConfig) (applyErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.attempted = cfg.Version
+	defer func() {
+		m.lastAttempt = time.Now()
+		m.applyError = applyErr
+	}()
 	if err := cfg.validate(); err != nil {
+		return err
+	}
+	m.current = cfg
+	// Prepare dependencies before touching existing routes, interfaces or secrets.
+	if err := m.ensureTools(cfg); err != nil {
 		return err
 	}
 	// 先撤销旧的分流规则与转发，再按新配置建立
@@ -333,10 +353,10 @@ func (m *Manager) apply(cfg *egressConfig) error {
 	m.removeWireguard(wanted)
 	m.stopGateways(gateways)
 	m.current = cfg
-	m.applied = cfg.Version
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "；"))
 	}
+	m.applied = cfg.Version
 	return nil
 }
 

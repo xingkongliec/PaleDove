@@ -78,7 +78,7 @@ function InstallCard({ node }: { node: NodeDTO }) {
   );
 }
 
-/** 重新安装：每次主动打开都签发新的安装命令，与参考项目一致。 */
+/** 重新安装：每次主动打开都签发新的安装命令。 */
 function ReinstallButton({ node }: { node: NodeDTO }) {
   const t = useT();
   const [open, setOpen] = useState(false);

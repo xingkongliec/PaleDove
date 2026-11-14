@@ -116,6 +116,7 @@ export default async function storeRoutes(app: FastifyInstance) {
         sshKeys: sshKeysSchema,
         couponCode: z.string().trim().max(32).optional().transform((v) => v || undefined),
         nodeId: z.number().int().positive().optional(),
+        nightMarketOfferId: z.number().int().positive().optional(),
       }),
       req.body,
     );
@@ -146,6 +147,7 @@ export default async function storeRoutes(app: FastifyInstance) {
     } else {
       const inst = await prisma.instance.findFirst({ where: { id: body.instanceId, userId: user.id, status: { notIn: ['DELETED', 'DELETING'] } }, include: { plan: { select: { productId: true } } } });
       if (!inst) throw notFound(t('instance.notFound'));
+      if (inst.nightRenewPrice !== null) throw badRequest(t('night.noStacking'));
       target = { productId: inst.plan?.productId ?? null, planId: inst.planId, cycle: inst.billingCycle, amount: inst.price.mul(body.periods) };
     }
     const { coupon, discount } = await quoteCoupon(prisma, body.code, { userId: user.id, kind: body.kind, ...target });

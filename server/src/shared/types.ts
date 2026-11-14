@@ -1,5 +1,6 @@
 import type { AvatarDTO } from './avatar';
 import type {
+  AffLogStatus,
   AffLogType,
   BalanceLogType,
   BillingCycle,
@@ -124,6 +125,8 @@ export interface PublicConfigDTO {
   affRateRenew: number;
   /** 交易市场已开启：首页与控制台显示「交易市场」 */
   marketEnabled: boolean;
+  nightMarketEnabled: boolean;
+  popups: import('./popups').PublicPopupsDTO;
   /** 成交手续费比例（%）与挂牌时实例至少要剩余的天数，出售时预估到账金额用 */
   marketFeeRate: number;
   marketMinDays: number;
@@ -466,8 +469,10 @@ export interface InstanceDTO {
   trafficResetAt: DateString;
   billingCycle: BillingCycle;
   price: Money;
-  /** 每期实际续费价格：绑定了循环抵扣的优惠码时为优惠后的价格 */
+  /** 每期实际续费价格：扣除夜市循环优惠或绑定优惠码后的价格 */
   renewPrice: Money;
+  /** 夜市循环优惠固定续费价，为空表示未绑定夜市循环优惠。 */
+  nightRenewPrice: Money | null;
   /** 绑定的循环抵扣优惠码 */
   renewCoupon: { code: string; name: string | null } | null;
   /** 加入的 VPC 与内网地址 */
@@ -569,6 +574,8 @@ export interface CredentialsDTO {
 
 // ───────── 计费 ─────────
 
+export type DiscountSource = 'COUPON' | 'NIGHT_MARKET' | 'OTHER';
+
 export interface OrderDTO {
   id: number;
   no: string;
@@ -577,6 +584,7 @@ export interface OrderDTO {
   /** 实付金额；原价 = amount + discount */
   amount: Money;
   discount: Money;
+  discountSource: DiscountSource | null;
   couponCode: string | null;
   status: OrderStatus;
   description: string | null;
@@ -610,16 +618,30 @@ export interface InvoiceDTO {
   status: InvoiceStatus;
   amount: Money;
   discount: Money;
+  discountSource: DiscountSource | null;
+  couponCode: string | null;
   description: string;
   instanceId: number | null;
   instance: { hostname: string; type: InstanceType } | null;
   plan: { name: string; product: string } | null;
   /** 仅包含购买配置，不包含密码、公钥或内部下单参数 */
   purchaseConfig: InvoicePurchaseConfigDTO | null;
+  nightMarket?: { name: string; quality: import('./night-market').NightQuality; discountPercent: number; discountMode?: import('./night-market').NightDiscountMode; periodId: number } | null;
   expiresAt: DateString | null;
   paidAt: DateString | null;
   createdAt: DateString;
   updatedAt: DateString;
+}
+
+export interface AdminInvoiceDTO extends InvoiceDTO {
+  user: { id: number; username: string; email: string };
+}
+
+export interface AdminInvoicesDTO extends Paginated<AdminInvoiceDTO> {
+  pending: AmountCount;
+  paid: AmountCount;
+  /** 仅统计筛选结果中已支付账单的优惠，不计入资金收入 */
+  discounts: { total: Money; nightMarket: Money; coupon: Money; other: Money };
 }
 
 export interface BalanceLogDTO {
@@ -632,7 +654,7 @@ export interface BalanceLogDTO {
   /** 关联的订单号或支付单号，从说明末尾拆出 */
   ref: string | null;
   /** 订单号对应的订单：实例主机名、产品 / 套餐、计费周期与优惠信息 */
-  order?: { hostname: string | null; plan: string | null; cycle: BillingCycle; type: InstanceType | null; amount: Money; discount: Money; couponCode: string | null };
+  order?: { hostname: string | null; plan: string | null; cycle: BillingCycle; type: InstanceType | null; amount: Money; discount: Money; discountSource: DiscountSource | null; couponCode: string | null };
   /** 在线充值对应的支付信息；兑换码、人工调整等记录没有此字段 */
   payment?: { methodName: string; channelName: string | null; amount: Money; fee: Money; payAmount: Money; currency: string; status: PaymentStatus };
   createdAt: DateString;
@@ -747,6 +769,8 @@ export interface AdminUserDTO {
 /** 管理端用户详情：账号信息 + 资源用量 */
 export interface AdminUserDetailDTO {
   user: AdminUserDTO;
+  billing: { totalSpend: Money; totalRecharge: Money };
+  profile: { registrationIp: string | null; locale: string | null; country: string | null };
   usage: { instances: number; running: number; ports: number; sites: number; snapshots: number; cpu: number; memory: number; disk: number };
   /** 该账号有没有本地登录密码（只用第三方账号注册的没有） */
   hasPassword: boolean;
@@ -1451,6 +1475,23 @@ export interface AffLogDTO {
   effectiveAt: DateString | null;
 }
 
+/** 后台佣金流水：返佣、退款撤回与转入余额分别保留，用户信息不脱敏。 */
+export interface AdminAffLogDTO {
+  id: number;
+  type: AffLogType;
+  status: AffLogStatus;
+  user: { id: number; username: string };
+  invitee: { id: number; username: string } | null;
+  order: { id: number; no: string; type: OrderType; amount: Money; status: OrderStatus } | null;
+  amount: Money;
+  /** 待生效、已作废的记录不改变余额，返回 null。 */
+  balanceAfter: Money | null;
+  orderAmount: Money | null;
+  rate: string | null;
+  createdAt: DateString;
+  effectiveAt: DateString | null;
+}
+
 /** 金额与笔数 */
 export interface AmountCount {
   amount: Money;
@@ -1501,6 +1542,7 @@ export interface AdminBillingOverviewDTO {
   adjust: Money;
   /** 优惠码累计减免（已支付订单） */
   coupons: AmountCount;
+  discounts: { total: AmountCount; nightMarket: AmountCount; coupon: AmountCount; other: AmountCount };
   /** 用户当前余额合计（尚未消费的预付款） */
   balance: { total: Money; users: number };
   /** 收入结构：按扣费类型与按产品 */

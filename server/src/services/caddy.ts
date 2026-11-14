@@ -76,6 +76,8 @@ export interface CaddyAdminOptions {
   publicIp: string;
   /** 面板客户端证书（Base64 DER），只有持有该证书的客户端可以访问远程管理 API */
   panelCertDer: string;
+  /** 安装脚本创建的独立管理 CA；旧节点未设置时继续使用 local */
+  caId?: string;
 }
 
 export function pemToDer(pem: string): string {
@@ -85,7 +87,7 @@ export function pemToDer(pem: string): string {
 export function caddyAdminBlock(o: CaddyAdminOptions) {
   return {
     listen: 'localhost:2019',
-    identity: { identifiers: [o.publicIp], issuers: [{ module: 'internal' }] },
+    identity: { identifiers: [o.publicIp], issuers: [{ module: 'internal', ...(o.caId ? { ca: o.caId } : {}) }] },
     remote: { listen: `:${o.adminPort}`, access_control: [{ public_keys: [o.panelCertDer] }] },
   };
 }

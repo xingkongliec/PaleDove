@@ -25,13 +25,15 @@ import (
 //
 // 回复的目的地址是实例，不会交给宿主机协议栈，用 AF_PACKET 套接字在所有网卡上抓 IPv4 报文匹配。
 type spoofer struct {
-	src    net.IP
-	send   int
-	recv   int
-	l2     *l2Target
-	w      waiters
-	closed atomic.Bool
-	wg     sync.WaitGroup
+	src     net.IP
+	send    int
+	recv    int
+	l2      *l2Target
+	w       waiters
+	closed  atomic.Bool
+	wg      sync.WaitGroup
+	errMu   sync.Mutex
+	readErr error
 }
 
 // l2Target 为 bridged 网卡的二层发送参数
@@ -91,8 +93,10 @@ func (s *spoofer) readLoop() {
 			if s.closed.Load() {
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
-			continue
+			s.errMu.Lock()
+			s.readErr = err
+			s.errMu.Unlock()
+			return
 		}
 		s.w.deliver(buf[:n], s.src, time.Now())
 	}
@@ -105,6 +109,12 @@ func (s *spoofer) Ping(dst net.IP, count int) []time.Duration {
 }
 
 func (s *spoofer) PingResult(dst net.IP, count int) ([]time.Duration, error) {
+	s.errMu.Lock()
+	err := s.readErr
+	s.errMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	send := func(pkt []byte, dst net.IP) error {
 		if s.l2 != nil {
 			frame := make([]byte, 14+len(pkt))
@@ -120,7 +130,13 @@ func (s *spoofer) PingResult(dst net.IP, count int) ([]time.Duration, error) {
 		copy(addr.Addr[:], dst.To4())
 		return syscall.Sendto(s.send, pkt, 0, &addr)
 	}
-	return pingWithResult(&s.w, send, s.src, dst, count)
+	rtts, err := pingWithResult(&s.w, send, s.src, dst, count)
+	if err != nil {
+		return rtts, err
+	}
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return rtts, s.readErr
 }
 
 func (s *spoofer) Close() {

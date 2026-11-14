@@ -27,6 +27,7 @@ if (process.env.DATABASE_URL?.startsWith('file:')) {
   const Database = require('better-sqlite3');
   let verifyExisting = false;
   let upgradeTickets = false;
+  let upgradeBilling = false;
   // 首次开发启动先创建目录和空库，避免 Windows 上 Prisma 对不存在文件报 Schema engine error。
   mkdirSync(dirname(file), { recursive: true });
   {
@@ -35,11 +36,28 @@ if (process.env.DATABASE_URL?.startsWith('file:')) {
     verifyExisting = columns.length > 0 && !columns.some((column) => column.name === 'emailVerifiedAt');
     const ticketColumns = db.prepare('PRAGMA table_info("Ticket")').all();
     upgradeTickets = ticketColumns.length > 0 && !ticketColumns.some((column) => column.name === 'lastReplyAt');
+    const invoiceColumns = db.prepare('PRAGMA table_info("Invoice")').all();
+    upgradeBilling = invoiceColumns.length > 0 && !invoiceColumns.some((column) => column.name === 'discountSource');
+    const nightColumns = db.prepare('PRAGMA table_info("NightMarketPeriod")').all();
+    if (nightColumns.length > 0 && !nightColumns.some((column) => column.name === 'number')) {
+      // Backfill distinct display numbers before Prisma adds their unique index.
+      db.transaction(() => {
+        db.exec('ALTER TABLE "NightMarketPeriod" ADD COLUMN "number" INTEGER NOT NULL DEFAULT 1');
+        db.exec('WITH numbered AS (SELECT "id", ROW_NUMBER() OVER (ORDER BY "startsAt", "id") AS n FROM "NightMarketPeriod") UPDATE "NightMarketPeriod" SET "number" = (SELECT n FROM numbered WHERE numbered."id" = "NightMarketPeriod"."id")');
+        db.exec('CREATE UNIQUE INDEX "NightMarketPeriod_number_key" ON "NightMarketPeriod"("number")');
+      })();
+    }
     db.close();
   }
   await import('./sqlite-schema.mjs');
   prisma('generate', '--config', 'prisma.sqlite.config.ts');
   prisma('db', 'push', '--config', 'prisma.sqlite.config.ts', ...rest);
+  if (upgradeBilling) {
+    const db = new Database(file);
+    const { backfillBillingDiscounts } = await import('./billing-discounts.mjs');
+    backfillBillingDiscounts(db);
+    db.close();
+  }
   if (verifyExisting) {
     const db = new Database(file);
     db.exec('UPDATE "User" SET "emailVerifiedAt" = CURRENT_TIMESTAMP');

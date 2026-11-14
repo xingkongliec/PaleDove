@@ -1,6 +1,6 @@
 # PaleDove 宿主机 Agent
 
-常驻在宿主机上的 Agent（Go，只用标准库），设计参考 incudal：
+常驻在宿主机上的 Agent（Go，只用标准库）：
 
 - 每 10 秒（间隔由面板回复下发）上报宿主机实时状态：CPU 使用率与核心数、内存、SWAP、根分区、负载、进程数、运行时长、系统与内核版本，以及 Incus 检测（本地 unix socket 是否可用、版本）。
 - 每 30 秒从面板拉取虚拟机的 CPU 限制，把 QEMU 进程放入 systemd scope（`paledove-vm-<实例名>.scope`）并设置 CPUQuota / CPUWeight；面板取消限制后自动解除。
@@ -9,6 +9,7 @@
 - 实例资源上报（0.5.0 起，能力 `instance-stats`）：实例管理页面打开期间，每 3 秒通过本机 Incus 读取该实例的实时状态并上报，页面显示「Agent 上报」。
 - 宿主机侧实例流量（0.8.0 起，能力 `host-traffic`）：每次心跳读取受管实例 eth0 / eth1 对应 veth / tap 的网卡计数，无需打开实例页面，也不依赖虚拟机内的 incus-agent。
 - SSH 备用执行（0.8.0 起，能力 `guest-exec`）：Incus 无法联系虚拟机内 Agent 时，面板下发有期限的签名任务，由宿主机通过 SSH 执行；需要 OpenSSH 客户端、实例允许 root 密码登录且保存的密码有效。
+- 智能分流依赖修复（0.8.1 起）：安装脚本补齐 `ip`、`iptables`、`wg`；已有宿主机首次启用出口时，Agent 检查并通过系统包管理器补装缺少的依赖。WireGuard 只安装 `wireguard-tools`，不替换内核或使用 `wg-quick` 修改宿主机默认路由。失败配置每分钟重试，包安装失败后 5 分钟内不重复安装；手动补装依赖会在下一轮重试中识别。
 
 ## 生成策略：一次性安装令牌
 
@@ -100,6 +101,14 @@ agent/
 
 新增功能时在 `internal/` 下建新包，在 `buildinfo.Capabilities` 中声明能力，并在 `agent` 的心跳回复处理里接入。
 
+## 交易市场上架 IP 检测
+
+0.8.2 新增 `listing-ping-v2`：每次上架或重试生成独立任务编号，随签名心跳下发本次固定的目标、发包次数和 IPv4/MAC 信息。Agent 只执行真实 ICMP，不用 TCP 测速代替；回传实际目标 IPv4、延迟和丢包率，DNS、权限、发包与抓包错误按检测故障处理。
+
+国内目标全不通时，从同一源地址测试 3 个境外对照，再复测国内与境外目标。仅当两轮完整结果都覆盖至少 3 个大陆省份、三网各至少 2 个不同 IPv4 目标且全部超时，同时至少 2 个相同的境外对照在两轮均可达，才显示 IP 异常（疑似跨境屏蔽）。部分超时显示部分超时，证据不足或历史快照缺少复核证据显示无法判定。ICMP 结果不能单独证明屏蔽原因。
+
+独立 IPv4 使用实例地址；桥接模式还使用实例 MAC 和网关，关机实例会在拨测前启动、结束后恢复挂牌关机。正式部署需同步发布新 Agent 并等待宿主机升级；旧 Agent 无法执行此检测。此功能独立于定时节点拨测开关。
+
 ## 切换机房 IPv4 检测
 
 支持 `ipv4-check` 的 Agent 从签名心跳回复的 `ipv4Checks` 接收即时任务，以实例对外的 IPv4 向国内三网的 6 个目标各发送 2 次 ICMP Echo Request，通过 `/api/agent/nodes/ipv4-check` 签名回传。此功能独立于定时节点测试，实例内无需安装 ping 或依赖 incus-agent。
@@ -110,7 +119,7 @@ NAT 绑定宿主机公网地址（云厂商 1:1 NAT 使用默认出口），独�
 
 ## 构建
 
-0.8.0 的新能力、网络接入条件和排障说明见 [实例访问与网络](../docs/INSTANCE_ACCESS.md)。Agent 自升级不会安装系统软件；现有宿主机若没有 `ssh`，需补装 OpenSSH 客户端或重跑 Agent 安装脚本。
+0.8.0 的新能力、网络接入条件和排障说明见 [实例访问与网络](../docs/INSTANCE_ACCESS.md)。Agent 自升级只替换二进制；0.8.1 起启用智能分流时会按需补装出口依赖（支持 apt-get / dnf / yum / apk，需要 Linux root 权限，单次最多等待 2 分钟）。现有宿主机若没有 `ssh`，仍需补装 OpenSSH 客户端或重跑 Agent 安装脚本。
 
 ```bash
 pnpm build:agent        # 在仓库根目录执行，输出 agent/dist/paledove-agent-linux-{amd64,arm64}、SHA256SUMS、VERSION
@@ -132,3 +141,5 @@ journalctl -u paledove-agent -n 50
 paledove-agent -once      # 采集一次并打印上报内容（不上报）
 paledove-agent -version
 ```
+
+若旧 Agent 提示 `exec: "wg": executable file not found in $PATH`，可在 Debian / Ubuntu 宿主机执行 `apt-get update && apt-get install -y iproute2 iptables wireguard-tools`，再执行 `systemctl restart paledove-agent` 重新应用出口配置。新版 Agent 会自动补装并重试；若提示创建 WireGuard 接口失败，还需确认宿主机内核支持 WireGuard，并允许 Agent 创建网络接口。

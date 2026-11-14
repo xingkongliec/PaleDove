@@ -94,6 +94,60 @@ describe('managed probe settings', () => {
     expect((await request('DELETE', `/api/admin/ping/targets/${custom.id}`)).statusCode).toBe(404);
   });
 
+  it.each([
+    ['香港', 'Hong Kong', 'hk'],
+    ['澳门', 'Macau', 'mo'],
+    ['台湾', 'Taiwan', 'tw'],
+  ])('saves and dispatches custom targets in %s', async (province, provinceEn, code) => {
+    const input = { province, name: `${provinceEn} probe`, host: `${code}-probe.example.test`, port: 443, enabled: true };
+    const added = await request('POST', '/api/admin/ping/targets', input);
+    expect(added.statusCode, added.body).toBe(200);
+    const custom = added.json();
+    expect(custom).toMatchObject({ province, provinceEn, host: input.host, isp: null });
+    const edited = await request('PATCH', `/api/admin/ping/targets/${custom.id}`, { ...input, port: 8443, isp: null });
+    expect(edited.statusCode, edited.body).toBe(200);
+    expect(edited.json()).toMatchObject({ province, provinceEn, port: 8443, isp: null });
+    expect((await request('GET', '/api/admin/ping')).json().targets).toContainEqual(edited.json());
+    expect((await probes.pingTargets(nodeId)).targets).toContainEqual({ id: custom.id, host: input.host, port: 8443 });
+    expect(await probes.savePingResults(nodeId, { method: 'icmp', results: [{ id: custom.id, latency: 12, loss: 0 }] })).toBe(true);
+    const stored = (await probes.getPingResults(nodeId))!;
+    expect(stored.targets).toContainEqual(customWithoutEnabled(edited.json()));
+    expect(summarizePing(stored.results, stored.targets).provinces.get(province)).toMatchObject({ best: 12, reachable: 1 });
+    expect(summarizePing(stored.results, stored.targets).isps.CT).toMatchObject({ total: 0, reachable: 0, fastest: null });
+  });
+
+  it('clears the carrier when switching to a regional target and requires it again for mainland provinces', async () => {
+    const added = await request('POST', '/api/admin/ping/targets', target());
+    expect(added.statusCode, added.body).toBe(200);
+    const url = `/api/admin/ping/targets/${added.json().id}`;
+    const edited = await request('PATCH', url, target({ province: '台湾' }));
+    expect(edited.statusCode, edited.body).toBe(200);
+    expect(edited.json()).toMatchObject({ province: '台湾', isp: null });
+    for (const isp of [null, undefined]) {
+      expect((await request('PATCH', url, target({ isp }))).statusCode).toBe(400);
+    }
+    const mainland = await request('PATCH', url, target({ isp: 'CM' }));
+    expect(mainland.statusCode, mainland.body).toBe(200);
+    expect(mainland.json()).toMatchObject({ province: '北京', isp: 'CM' });
+  });
+
+  it('normalizes legacy regional carriers without mixing them into mainland network statistics', async () => {
+    const mainland = settings.settingDefaults.ping.targets[0]!;
+    const legacy = { ...mainland, id: 'legacy-hk', province: '香港', provinceEn: 'Hong Kong', host: 'hk-probe.example.test' };
+    await settings.setSetting('ping', { targets: [mainland, legacy] });
+    const data = (await request('GET', '/api/admin/ping')).json();
+    expect(data.targets.find((item: { id: string }) => item.id === legacy.id)).toMatchObject({ isp: null });
+    await probes.pingTargets(nodeId);
+    await probes.savePingResults(nodeId, { method: 'icmp', results: [{ id: legacy.id, latency: 5, loss: 0 }, { id: mainland.id, latency: 50, loss: 0 }] });
+    const stored = (await probes.getPingResults(nodeId))!;
+    expect(stored.targets?.find(item => item.id === legacy.id)).toMatchObject({ isp: null });
+    const summary = summarizePing(stored.results, [mainland, legacy]);
+    expect(summary).toMatchObject({ total: 2, reachable: 2 });
+    expect(summary.provinces.get('香港')).toMatchObject({ best: 5, reachable: 1, byIsp: {}, regional: { id: legacy.id, latency: 5 } });
+    expect(summary.isps.CT).toMatchObject({ total: 1, reachable: 1, fastest: { target: { id: mainland.id }, latency: 50 } });
+    expect(pingTargetsHash([legacy])).toBe(pingTargetsHash([{ ...legacy, isp: null }]));
+  });
+
   it('validates addresses, duplicates, schedules and target limits', async () => {
     for (const host of ['https://example.test', 'example.test/path', 'example.test:443', '999.999.999.999', '::1', '-bad.test', '']) expect((await request('POST', '/api/admin/ping/targets', target({ host }))).statusCode, host).toBe(400);
     expect((await request('POST', '/api/admin/ping/targets', target({ host: '192.0.2.10' }))).statusCode).toBe(200);

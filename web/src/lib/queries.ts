@@ -4,6 +4,7 @@ import { api, ApiError } from './api';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
+    mutations: { meta: { progress: true } },
     queries: {
       staleTime: 10_000,
       refetchOnWindowFocus: false,

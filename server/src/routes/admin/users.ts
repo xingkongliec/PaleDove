@@ -10,6 +10,7 @@ import { getSetting } from '../../lib/settings.ts';
 import { parseUserAgent } from '../../lib/ua.ts';
 import { createSession, destroyUserSession, destroyUserSessions, listUserSessions } from '../../plugins/session.ts';
 import { changeBalance } from '../../services/billing.ts';
+import { adminUserNightMarket, resetUserNightMarket } from '../../services/night-market.ts';
 import { listProviders, type ProviderInfo } from '../../services/oauth.ts';
 import { money, toAdminUser, toMe } from '../../services/serializers.ts';
 import { m, t } from '../../i18n/index.ts';
@@ -71,16 +72,23 @@ export default async function adminUserRoutes(app: FastifyInstance) {
     const { id } = parse(idParam, req.params);
     const user = ensureFound(await prisma.user.findUnique({ where: { id }, include: userInclude }), t('user.notFound'));
     const alive = { userId: id, status: { not: 'DELETED' as const } };
-    const [providers, specs, running, ports, sites, snapshots] = await Promise.all([
+    const [providers, specs, running, ports, sites, snapshots, spending, recharge, registration] = await Promise.all([
       oauthProviders(),
       prisma.instance.aggregate({ where: alive, _count: true, _sum: { cpu: true, memory: true, disk: true } }),
       prisma.instance.count({ where: { userId: id, status: 'RUNNING' } }),
       prisma.portMapping.count({ where: { instance: alive } }),
       prisma.siteBinding.count({ where: { instance: alive } }),
       prisma.snapshot.count({ where: { instance: alive } }),
+      // 与用户费用中心保持相同口径，退款抵扣消费，充值包含兑换码到账。
+      prisma.balanceLog.aggregate({ where: { userId: id, type: { in: ['PURCHASE', 'RENEW', 'REFUND', 'TRANSFER', 'TRAFFIC', 'MARKET', 'SWITCH'] } }, _sum: { amount: true } }),
+      prisma.balanceLog.aggregate({ where: { userId: id, type: { in: ['RECHARGE', 'REDEEM'] } }, _sum: { amount: true } }),
+      prisma.activityLog.findFirst({ where: { userId: id, action: 'auth.register' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { ip: true } }),
     ]);
+    const totalSpend = spending._sum.amount;
     return {
       user: adminUser(user, providers),
+      billing: { totalSpend: money(totalSpend?.isNegative() ? totalSpend.abs() : null), totalRecharge: money(recharge._sum.amount) },
+      profile: { registrationIp: registration?.ip ?? null, locale: user.locale, country: user.country },
       usage: { instances: specs._count, running, ports, sites, snapshots, cpu: specs._sum.cpu ?? 0, memory: specs._sum.memory ?? 0, disk: specs._sum.disk ?? 0 },
       hasPassword: hasPassword(user),
     };
@@ -114,6 +122,19 @@ export default async function adminUserRoutes(app: FastifyInstance) {
         createdAt: i.createdAt.toISOString(),
       })),
     };
+  });
+
+  app.get('/api/admin/users/:id/night-market', async req => {
+    const { id } = parse(idParam, req.params);
+    return adminUserNightMarket(id);
+  });
+
+  app.post('/api/admin/users/:id/night-market/reset', async req => {
+    const { id } = parse(idParam, req.params);
+    const body = parse(z.object({ periodId: z.number().int().positive(), offerIds: z.array(z.number().int().positive()).max(6).refine(ids => new Set(ids).size === ids.length) }).strict(), req.body);
+    const result = await resetUserNightMarket(id, body);
+    await logActivity(req, requireAdmin(req).id, 'admin.user_night_market_reset', `user #${id}; period #${body.periodId}; retained=${result.retainedOffers}; canceledInvoices=${result.canceledInvoices}`);
+    return result;
   });
 
   /** 用户的登录设备（有效会话），含管理员代登录产生的会话 */

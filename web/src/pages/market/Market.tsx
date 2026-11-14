@@ -2,22 +2,22 @@ import { useQuery } from '@tanstack/react-query';
 import { Info, RefreshCw, Search, Store, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import type { InstanceType, MarketListingDTO, MarketListPageDTO, MarketSort } from '../../shared/index';
+import type { InstanceType, MarketListingDTO, MarketSort } from '../../shared/index';
 import { PageHeader, Toolbar } from '@/components/page';
+import { DataTransition } from '@/components/DataTransition';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, Empty, ErrorState, Skeleton } from '@/components/ui/misc';
 import { Select } from '@/components/ui/select';
 import { Pagination } from '@/components/ui/table';
 import { useI18n } from '@/i18n';
-import { api } from '@/lib/api';
+import { MARKET_PAGE_SIZE as PAGE_SIZE, marketListOptions } from '@/lib/market-query';
 import { useMe, usePublicConfig } from '@/lib/queries';
 import { BuyDialog } from './BuyDialog';
 import { MarketCard } from './MarketCard';
 import { MarketPingDialog } from './MarketPing';
 import { PriceHistoryDialog } from './PriceHistoryDialog';
 
-const PAGE_SIZE = 12;
 /** 下拉框里「全部」的取值（Select 不接受空字符串） */
 const ALL = 'ALL';
 
@@ -48,9 +48,7 @@ export default function Market() {
   }, [search]);
 
   const q = useQuery({
-    queryKey: ['market', { region, type, sort, keyword, page, user: me?.id ?? 0 }],
-    queryFn: () =>
-      api.get<MarketListPageDTO>('/public/market', { page, pageSize: PAGE_SIZE, sort, region: region === ALL ? undefined : region, type: type === ALL ? undefined : type, q: keyword || undefined }),
+    ...marketListOptions({ region, type, sort, keyword, page }, me?.id ?? 0),
     placeholderData: (prev) => prev,
     enabled: cfg?.marketEnabled !== false,
     // 有商品正在拨测时每 5 秒刷新，拨测完成后卡片自动显示结果
@@ -136,12 +134,13 @@ export default function Market() {
           <p>{t('market.warning', { rate: cfg?.marketFeeRate ?? 0 })}</p>
         </div>
 
-        {q.isError ? (
+        <DataTransition pending={q.isLoading || q.isPlaceholderData} refreshing={q.isFetching}>
+        {q.isError && !q.data ? (
           <ErrorState error={q.error} onRetry={() => void q.refetch()} />
         ) : q.isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
-              <Skeleton key={i} className="h-96 rounded-md" />
+              <Skeleton key={i} className="h-80 rounded-md" />
             ))}
           </div>
         ) : items.length === 0 ? (
@@ -150,7 +149,7 @@ export default function Market() {
           </Card>
         ) : (
           <>
-            <div className={`grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 ${q.isPlaceholderData ? 'opacity-60 transition-opacity' : ''}`}>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {items.map((l) => (
                 <MarketCard key={l.id} listing={l} onBuy={setBuying} onHistory={setHistory} onPing={setPinging} />
               ))}
@@ -160,15 +159,16 @@ export default function Market() {
             </Card>
           </>
         )}
+        </DataTransition>
         <p className="flex items-start gap-1.5 text-xs text-fg-3">
           <Info className="mt-0.5 size-3.5 shrink-0" />
           {t('market.footnote')}
         </p>
       </div>
 
-      <BuyDialog listing={buying} onClose={() => setBuying(null)} />
+      {buying && <BuyDialog listing={buying} onClose={() => setBuying(null)} />}
       <PriceHistoryDialog listing={history} onClose={() => setHistory(null)} />
-      <MarketPingDialog subject={pinging && { id: pinging.id, title: pinging.plan ?? pinging.product?.name ?? `#${pinging.id}`, region: pinging.region, country: pinging.country }} onClose={() => setPinging(null)} />
+      {pinging && <MarketPingDialog subject={{ id: pinging.id, title: pinging.plan ?? pinging.product?.name ?? `#${pinging.id}`, region: pinging.region, country: pinging.country }} onClose={() => setPinging(null)} />}
     </>
   );
 }

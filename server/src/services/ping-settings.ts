@@ -1,4 +1,4 @@
-import type { AdminPingSettingsDTO, ManagedPingTarget, PingSettings, PingTarget } from '../shared/index.ts';
+import { pingTargetIsp, type AdminPingSettingsDTO, type ManagedPingTarget, type PingSettings, type PingTarget } from '../shared/index.ts';
 import { prisma } from '../lib/prisma.ts';
 import { getSetting, setSetting } from '../lib/settings.ts';
 import { redis, withLock } from '../lib/redis.ts';
@@ -8,7 +8,7 @@ import { getHostReport } from './agent/agent.ts';
 
 export const PING_SETTINGS_LOCK = 'settings:ping';
 export const pingRunKey = (id: number) => `node:ping:run:${id}`;
-export const activePingTargets = (settings: PingSettings): PingTarget[] => settings.targets.filter(target => target.enabled).map(({ enabled: _enabled, ...target }) => target);
+export const activePingTargets = (settings: PingSettings): PingTarget[] => settings.targets.filter(target => target.enabled).map(({ enabled: _enabled, ...target }) => ({ ...target, isp: pingTargetIsp(target) }));
 export const pingObjectEnabled = (settings: PingSettings, node: { id: number; enabled: boolean; pingEnabled: boolean }) => settings.enabled && node.enabled && node.pingEnabled && (settings.nodeIds === null || settings.nodeIds.includes(node.id)) && settings.targets.some(target => target.enabled);
 
 export async function adminPingSettings(): Promise<AdminPingSettingsDTO> {
@@ -19,7 +19,7 @@ export async function adminPingSettings(): Promise<AdminPingSettingsDTO> {
     const result = raw ? JSON.parse(raw) as { testedAt?: string } : null;
     return { id: node.id, name: node.name, region: node.region, enabled: node.pingEnabled, nodeEnabled: node.enabled, online: !!report?.online, testedAt: result?.testedAt ?? null };
   }));
-  return { ...settings, objects: all.filter(node => ids.has(node.id)), available: all.filter(node => !ids.has(node.id)).map(({ testedAt: _testedAt, ...node }) => node) };
+  return { ...settings, targets: settings.targets.map(target => ({ ...target, isp: pingTargetIsp(target) })), objects: all.filter(node => ids.has(node.id)), available: all.filter(node => !ids.has(node.id)).map(({ testedAt: _testedAt, ...node }) => node) };
 }
 
 /** Serialize target changes and object changes against the same persisted settings. */

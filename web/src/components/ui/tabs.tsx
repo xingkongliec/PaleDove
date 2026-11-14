@@ -33,8 +33,14 @@ export function TabBar<T extends string>({
   const pill = variant === 'pill';
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>('[data-active]');
-    el?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    const list = listRef.current;
+    const el = list?.querySelector<HTMLElement>('[data-active]');
+    if (!list || !el) return;
+    // 只滚动标签栏；scrollIntoView 会同时滚动页面，切页后看起来会跳一下。
+    const left = el.offsetLeft;
+    const right = left + el.offsetWidth;
+    if (left < list.scrollLeft) list.scrollLeft = left;
+    else if (right > list.scrollLeft + list.clientWidth) list.scrollLeft = right - list.clientWidth;
   }, [value]);
   return (
     <BaseTabs.Root value={value} onValueChange={(v) => onChange(v as T)} className={cn('relative', className)}>

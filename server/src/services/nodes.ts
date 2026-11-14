@@ -159,7 +159,7 @@ export async function nodeInstallScript(node: Node, token: string, panelUrl: str
     ipv6: hasIpv6Mode(node.networkMode),
     ipv6Parent: node.ipv6Parent,
     panelCert: cert,
-    // 每次下载安装脚本都签发新的一次性 Agent 安装令牌（参考 incudal），脚本里不出现长期密钥
+    // 每次下载安装脚本都签发新的一次性 Agent 安装令牌，脚本里不出现长期密钥
     agentInstallToken: (await issueAgentInstallToken(node.id)).token,
     installAgent: node.installAgent,
     installFirewall: node.installFirewall,

@@ -82,11 +82,12 @@ function Overview({ summary }: { summary: ReturnType<typeof summarizePing> }) {
 }
 
 type SortKey = 'latency' | 'loss';
+const TARGET_GROUPS: Array<PingIsp | null> = [...PING_ISPS, null];
 
 /** 节点列表：运营商筛选（可多选），按延迟或丢包排序 */
 function TargetList({ node }: { node: NodePingDTO }) {
   const { t, locale } = useI18n();
-  const [isps, setIsps] = useState<Set<PingIsp>>(new Set(PING_ISPS));
+  const [isps, setIsps] = useState<Set<PingIsp | null>>(new Set(TARGET_GROUPS));
   const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: 'latency', asc: true });
   const rows = useMemo(() => {
     const list = node.results.flatMap((r) => {
@@ -96,10 +97,11 @@ function TargetList({ node }: { node: NodePingDTO }) {
     const value = (r: (typeof list)[number]) => (sort.key === 'loss' ? r.loss : (r.latency ?? Infinity));
     return list.sort((a, b) => (value(a) - value(b)) * (sort.asc ? 1 : -1));
   }, [node.results, node.targets, sort]);
-  const count = (isp: PingIsp) => rows.filter((r) => r.target.isp === isp).length;
+  const count = (isp: PingIsp | null) => rows.filter((r) => r.target.isp === isp).length;
+  const hasIsps = rows.some(r => r.target.isp !== null);
   const shown = rows.filter((r) => isps.has(r.target.isp));
-  const toggle = (isp: PingIsp | 'ALL', on: boolean) =>
-    setIsps(isp === 'ALL' ? new Set(on ? PING_ISPS : []) : (prev) => {
+  const toggle = (isp: PingIsp | null | 'ALL', on: boolean) =>
+    setIsps(isp === 'ALL' ? new Set(on ? TARGET_GROUPS : []) : (prev) => {
       const next = new Set(prev);
       if (on) next.add(isp);
       else next.delete(isp);
@@ -111,8 +113,8 @@ function TargetList({ node }: { node: NodePingDTO }) {
       {sort.key === key && sort.asc ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5 opacity-60" />}
     </button>
   );
-  const chip = (key: PingIsp | 'ALL', label: string, n: number, checked: boolean) => (
-    <label key={key} className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-fg-2 hover:border-line-strong">
+  const chip = (key: PingIsp | null | 'ALL', label: string, n: number, checked: boolean) => (
+    <label key={key ?? 'none'} className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-fg-2 hover:border-line-strong">
       <Checkbox checked={checked} onCheckedChange={(v) => toggle(key, v)} />
       {label}
       <span className="tabular text-fg-3">{n}</span>
@@ -123,8 +125,9 @@ function TargetList({ node }: { node: NodePingDTO }) {
       title={t('ping.list')}
       extra={
         <div className="flex flex-wrap justify-end gap-1.5">
-          {chip('ALL', t('ping.all'), rows.length, isps.size === PING_ISPS.length)}
+          {chip('ALL', t('ping.all'), rows.length, isps.size === TARGET_GROUPS.length)}
           {PING_ISPS.map((isp) => chip(isp, t(`ping.isp.${isp}`), count(isp), isps.has(isp)))}
+          {count(null) > 0 && chip(null, t('ping.noIsp'), count(null), isps.has(null))}
         </div>
       }
     >
@@ -133,7 +136,7 @@ function TargetList({ node }: { node: NodePingDTO }) {
           <thead className="sticky top-0 bg-surface-2 text-left text-xs text-fg-3">
             <tr>
               <th className="px-4 py-2 font-medium">{t('ping.col.node')}</th>
-              <th className="px-3 py-2 font-medium">{t('ping.col.isp')}</th>
+              {hasIsps && <th className="px-3 py-2 font-medium">{t('ping.col.isp')}</th>}
               <th className="px-3 py-2 font-medium">{header('latency', t('ping.col.latency'))}</th>
               <th className="px-3 py-2 font-medium">{header('loss', t('ping.col.loss'))}</th>
               <th className="px-3 py-2 font-medium">{t('ping.col.status')}</th>
@@ -144,9 +147,9 @@ function TargetList({ node }: { node: NodePingDTO }) {
             {shown.map((r) => (
               <tr key={r.id} className="hover:bg-surface-2/50">
                 <td className="px-4 py-2 text-fg">
-                  {r.target.name || `${locale === 'en' ? r.target.provinceEn : r.target.province}${t(`ping.isp.${r.target.isp}`)}`}
+                  {r.target.name || `${locale === 'en' ? r.target.provinceEn : r.target.province}${r.target.isp ? t(`ping.isp.${r.target.isp}`) : ''}`}
                 </td>
-                <td className="px-3 py-2 text-fg-2">{t(`ping.isp.${r.target.isp}`)}</td>
+                {hasIsps && <td className="px-3 py-2 text-fg-2">{r.target.isp ? t(`ping.isp.${r.target.isp}`) : '—'}</td>}
                 <td className={cn('tabular px-3 py-2', LAT_TEXT[latencyLevel(r.latency)])}>{ms(r.latency) ?? t('ping.timeout')}</td>
                 <td className="tabular px-3 py-2 text-fg-2">{r.loss}%</td>
                 <td className="px-3 py-2">

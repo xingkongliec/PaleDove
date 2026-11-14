@@ -1,4 +1,4 @@
-import { Clock, History, ShoppingCart } from 'lucide-react';
+import { Clock, History } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { MarketListingDTO } from '../../shared/index';
 import { CountryFlag } from '@/components/country';
@@ -18,9 +18,9 @@ const gbOf = (bytes: number) => `${(bytes / GB).toFixed(2)} GB`;
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-start gap-3 py-[3px] text-[13px] leading-5">
-      <dt className="w-[4.25rem] shrink-0 text-fg-3">{label}</dt>
-      <dd className="tabular min-w-0 flex-1 break-words text-fg">{children}</dd>
+    <div className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-x-3 py-px text-[13px] leading-5">
+      <dt className="text-fg-3">{label}</dt>
+      <dd className="tabular min-w-0 break-words text-fg-2">{children}</dd>
     </div>
   );
 }
@@ -75,56 +75,49 @@ export function MarketCard({
   const { t, L } = useI18n();
   const currency = useCurrency();
   return (
-    <div className="flex flex-col rounded-md border border-line bg-surface p-5 transition-colors duration-200 hover:border-line-strong">
-      <div className="flex items-start justify-between gap-3">
+    <article className="market-card flex min-w-0 flex-col rounded-md border border-line bg-surface p-4 transition-colors duration-200 hover:border-line-strong">
+      <div className="flex items-center justify-between gap-2">
         <Tooltip content={<ProductTip l={l} />}>
-          <h3 className="min-w-0 cursor-pointer truncate text-[17px] leading-7 font-semibold text-fg transition-colors hover:text-fg-2">{l.plan ?? l.product?.name ?? `#${l.id}`}</h3>
+          <h3 className="min-w-0 truncate text-lg leading-6 font-semibold tracking-tight text-fg">{l.plan ?? l.product?.name ?? `#${l.id}`}</h3>
         </Tooltip>
         <Tooltip content={t('market.history')}>
           <button
             type="button"
             aria-label={t('market.history')}
             onClick={() => onHistory(l)}
-            className="flex size-8 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2/60 text-fg-3 transition-colors hover:border-line-strong hover:text-fg"
+            className="flex size-6 shrink-0 items-center justify-center rounded bg-surface-3 text-fg-3 transition-colors hover:text-fg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
-            <History className="size-4" />
+            <History className="size-3.5" />
           </button>
         </Tooltip>
       </div>
 
       {/* 上架前拨测快照：IP 状态、拨测时间与三网最快，点击查看详情；功能上线前上架的商品只显示上架时间 */}
       {l.ping ? (
-        <div className="mt-1.5">
+        <div className="mt-1">
           <PingSummaryButton ping={l.ping} onOpen={() => onPing(l)} />
         </div>
       ) : (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="inline-flex items-center gap-1 text-[11px] text-fg-3">
             <Clock className="size-3" />
             {formatDate(l.createdAt, 'YYYY-MM-DD HH:mm:ss')}
           </span>
         </div>
       )}
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {l.targeted && <Tag tone="warning">{t('market.targeted')}</Tag>}
-        {l.product?.tags.slice(0, 3).map((tag) => (
-          <Tag key={tag} tone="success">
-            {tag}
-          </Tag>
-        ))}
-      </div>
+      {l.targeted && <div className="mt-1"><Tag tone="warning">{t('market.targeted')}</Tag></div>}
 
-      <dl className="mt-3.5">
+      <dl className="mt-2">
         <Row label={t('common.region')}>
           <span className="inline-flex items-center gap-1.5">
             <CountryFlag code={l.country} className="h-3.5 w-5" />
             {l.region}
           </span>
         </Row>
-        <Row label={t('market.field.product')}>{l.product?.name ?? '—'}</Row>
-        <Row label={t('market.field.plan')}>{l.plan ?? '—'}</Row>
+        <Row label={t('market.field.product')}><span className="block truncate" title={l.product?.name}>{l.product?.name ?? '—'}</span></Row>
+        <Row label={t('market.field.plan')}><span className="block truncate" title={l.plan ?? undefined}>{l.plan ?? '—'}</span></Row>
         <Row label={t('market.field.config')}>
-          {formatCores(l.cpu)} {formatMemory(l.memory)} {l.disk}GB
+          {formatCores(l.cpu)} · {formatMemory(l.memory)} · {l.disk} GB
         </Row>
         <Row label={t('market.field.network')}>
           {t('market.bandwidth')} {formatBandwidth(Math.max(l.bandwidthIn, l.bandwidthOut))}{' '}
@@ -155,20 +148,20 @@ export function MarketCard({
           </Row>
         )}
         <Row label={t('market.field.expires')}>
-          {formatDate(l.expiresAt, 'YYYY-MM-DD HH:mm:ss')} <span className="text-xs text-fg-3">({daysLeftText(l.expiresAt)})</span>
+          <Tooltip content={daysLeftText(l.expiresAt)}><time dateTime={l.expiresAt}>{formatDate(l.expiresAt, 'YYYY-MM-DD HH:mm:ss')}</time></Tooltip>
         </Row>
       </dl>
 
-      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-        <span className="tabular text-[26px] leading-none font-bold tracking-tight text-fg">{formatMoney(l.price, currency)}</span>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-2.5">
+        <span className="tabular text-[22px] leading-8 font-semibold tracking-tight text-warning-text">{formatMoney(l.price, currency)}</span>
         {l.mine ? (
           <Tag>{t('market.mine')}</Tag>
         ) : (
-          <Button variant="primary" size="sm" className="rounded-md" icon={<ShoppingCart />} onClick={() => onBuy(l)}>
+          <Button variant="primary" size="sm" className="h-8 min-w-16 rounded-md px-4" onClick={() => onBuy(l)}>
             {t('market.buy')}
           </Button>
         )}
       </div>
-    </div>
+    </article>
   );
 }

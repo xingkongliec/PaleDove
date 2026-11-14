@@ -1,4 +1,4 @@
-// 系统设置 → 支付：支付渠道列表（易支付 / Stripe / Heleket 各可添加多个），每个渠道单独设置金额范围和手续费
+// 计费管理 → 支付渠道：易支付 / Stripe / Heleket 各可添加多个，每个渠道单独设置金额范围和手续费
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
