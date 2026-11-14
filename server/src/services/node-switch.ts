@@ -6,7 +6,7 @@
 //  - 在目标宿主机上用所选系统全新安装：原数据不迁移，公网 IP / 端口会变化；成功后才删除原宿主机上的实例，
 //    失败时把网络资源还回原宿主机，原实例不受影响，额外切换的费用退回。
 //  - 切换成功后冷却 2 小时；有附加数据盘、挂牌出售中、有进行中任务的实例不能切换。
-//  - 原 IPv4 未被墙：用 ICMP Ping 检测国内三网是否可达（见 checkIpv4），全部不通时不能切换。
+//  - Agent ICMP 仅检测原 IPv4 的可达性，全部超时也不判墙，不增加免费次数或自动换 IP。
 import { isNatType, isPublicIpv4Mode, nodeAllowsImage, productNodeOption } from '../shared/index.ts';
 import { checkIpv4 } from './agent/ipv4-check.ts';
 export { checkIpv4 } from './agent/ipv4-check.ts';

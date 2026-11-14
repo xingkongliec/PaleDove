@@ -1,8 +1,8 @@
 // 宿主机状态：由宿主机 Agent（agent，Go）每 10 秒上报的实时资源与运行状态，以及 Agent 的安装 / 重装
-import { useMutation, type UseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { compareHostAgentReleases, HOST_AGENT_VERSION, type HostReportDTO, type NodeDTO, type NodeResourcesDTO } from '../../../shared/index';
+import { compareHostAgentReleases, HOST_AGENT_VERSION, type AgentVersionCheckDTO, type HostReportDTO, type NodeDTO, type NodeResourcesDTO } from '../../../shared/index';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/dialog';
 import { Alert, Badge, Card, CodeBlock, Empty, Skeleton } from '@/components/ui/misc';
@@ -126,6 +126,17 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
  */
 export function HostStatusCard({ node, res }: { node: NodeDTO; res: UseQueryResult<NodeResourcesDTO> }) {
   const t = useT();
+  const qc = useQueryClient();
+  const checkVersion = useMutation({
+    mutationKey: ['agent-version-check'],
+    mutationFn: () => api.post<AgentVersionCheckDTO>('/admin/agent/check-update'),
+    onSuccess: async result => {
+      await qc.cancelQueries({ queryKey: ['node-resources'] });
+      qc.setQueriesData<NodeResourcesDTO>({ queryKey: ['node-resources'] }, current => current ? { ...current, agentLatestVersion: result.version } : current);
+      toast.success(t(result.source === 'github' ? 'nodeDetail.host.versionChecked' : 'nodeDetail.host.localVersionChecked', { version: result.version }));
+    },
+    onError: error => toast.fromError(error),
+  });
   const r = res.data;
   const host: HostReportDTO | null = r?.host ?? null;
   const installed = !!r?.agentInstalled;
@@ -183,14 +194,20 @@ export function HostStatusCard({ node, res }: { node: NodeDTO; res: UseQueryResu
           {/* 状态行：版本、功能；右侧为 Incus 检测与心跳信息（还没有上报时整块不显示） */}
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-line pb-4">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {host &&
-                (legacy ? (
-                  <span className={cn(PILL, 'border-warning-icon/40 bg-warning-soft text-warning-text')}>{t('nodeDetail.host.legacy')}</span>
-                ) : (
-                  <span className={cn(PILL, 'font-mono', outdated ? 'border-warning-icon/40 bg-warning-soft text-warning-text' : 'border-success/40 bg-success-soft text-success-text')}>
-                    v{host.release} {outdated && latest ? t('nodeDetail.host.outdated', { version: latest }) : latest && compareHostAgentReleases(latest, host.release ?? '') === 0 ? t('nodeDetail.host.latest') : ''}
-                  </span>
-                ))}
+              <button
+                type="button"
+                title={t('nodeDetail.host.checkVersion')}
+                aria-label={t('nodeDetail.host.checkVersion')}
+                aria-busy={checkVersion.isPending}
+                disabled={checkVersion.isPending}
+                onClick={() => checkVersion.mutate()}
+                className={cn(PILL, 'gap-1.5 font-mono transition-[color,background-color,box-shadow] hover:brightness-95 active:scale-[0.97] focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-wait disabled:opacity-70', outdated ? 'border-warning-icon/40 bg-warning-soft text-warning-text' : 'border-success/40 bg-success-soft text-success-text')}
+              >
+                {checkVersion.isPending && <RefreshCw aria-hidden className="size-3 animate-spin" />}
+                {checkVersion.isPending ? t('nodeDetail.host.checkingVersion') : legacy ? t('nodeDetail.host.legacy') : <>
+                  v{host.release} {outdated && latest ? t('nodeDetail.host.outdated', { version: latest }) : latest && compareHostAgentReleases(latest, host.release ?? '') === 0 ? t('nodeDetail.host.latest') : ''}
+                </>}
+              </button>
               {host?.capabilities?.map((c) => (
                 <span key={c} className={cn(PILL, 'border-transparent bg-info-soft text-info-text')}>
                   {c}

@@ -126,6 +126,7 @@ export const common: Record<keyof typeof zh, string> = {
   'nav.admin.announcements': 'Announcements',
   'nav.admin.tasks': 'Tasks & logs',
   'nav.admin.settings': 'Settings',
+  'nav.admin.affiliate': 'Referral rewards',
   'nav.admin.realname': 'Identity verification',
   'nav.terminal': 'Terminal',
   'nav.transfer': 'Transfer',

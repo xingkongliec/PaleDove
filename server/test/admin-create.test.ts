@@ -386,7 +386,7 @@ describe('admin instance creation and store purchase', () => {
       expect(info.current).toMatchObject({ trafficMultiplier: 1, traffic: 100 });
       expect((await request('POST', `/api/instances/${id}/switch-node`, userCookie, { targetNodeId: natNodeId, imageId })).statusCode).toBe(400);
 
-      // 即时 Agent ICMP 检测：进行中禁止切换，六个目标均超时才判为疑似被墙。
+      // 即时 Agent ICMP 检测：进行中禁止切换，六个目标均超时仍不足以判墙。
       const { issueAgentToken, clearHostReport, signResponse } = await import('../src/services/agent/agent.ts');
       const { createHash, createHmac, randomBytes } = await import('node:crypto');
       const secret = await issueAgentToken(natNodeId);
@@ -409,8 +409,7 @@ describe('admin instance creation and store purchase', () => {
         expect(await agentRequest('/api/agent/nodes/ipv4-check', { id, requestId: job.requestId, method: 'icmp', via: 'local', results: job.targets.map((p: { id: string }) => ({ id: p.id, latency: reachable ? 30 : null, loss: reachable ? 0 : 100 })) })).toEqual({ ok: true });
       };
       await report(false);
-      expect((await request('GET', `/api/instances/${id}/switch-node/check`, userCookie)).json()).toMatchObject({ status: 'blocked', method: 'icmp', reachable: 0, total: 6 });
-      expect((await request('POST', `/api/instances/${id}/switch-node`, userCookie, { targetNodeId: target.id, imageId })).statusCode).toBe(409);
+      expect((await request('GET', `/api/instances/${id}/switch-node/check`, userCookie)).json()).toMatchObject({ status: 'unknown', reason: 'icmpOnly', method: 'icmp', reachable: 0, total: 6 });
       expect(await check()).toMatchObject({ status: 'pending' });
       await report(true);
       expect((await request('GET', `/api/instances/${id}/switch-node/check`, userCookie)).json()).toMatchObject({ status: 'ok', method: 'icmp' });

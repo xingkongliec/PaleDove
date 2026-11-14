@@ -73,6 +73,20 @@ export async function loadAgentManifest(): Promise<AgentManifest> {
   return manifest;
 }
 
+/** 主动重新检查发布源；本地模式只检查实际可下载的构建文件。 */
+export async function refreshAgentManifest(): Promise<AgentManifest> {
+  if (releases) {
+    try {
+      return await releases.refreshManifest();
+    } catch {
+      throw new AppError(503, 'AGENT_RELEASE_UNAVAILABLE', t('agent.releaseUnavailable'));
+    }
+  }
+  const manifest = agentManifest();
+  if (!Object.keys(manifest.files).length) throw new AppError(503, 'AGENT_BINARY_MISSING', t('agent.binaryMissing'));
+  return manifest;
+}
+
 export async function downloadAgentBinary(arch: AgentArch, version?: string, sha256?: string): Promise<Buffer> {
   if (releases) {
     try {

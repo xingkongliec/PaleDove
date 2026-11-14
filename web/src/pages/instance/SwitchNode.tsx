@@ -302,6 +302,7 @@ export function SwitchNodeDialog({ inst, open, onClose }: { inst: AnyInstance; o
               </Button>
             </div>
             {ipBlocked && <Alert tone="danger">{t('switch.ipBlockedDesc')}</Alert>}
+            <p className="text-xs leading-relaxed text-fg-3">{t('market.ping.policy')}</p>
             <FormField label={t('switch.target')}>
               {d.targets.length ? (
                 <Select<number>

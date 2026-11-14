@@ -125,6 +125,7 @@ export const common = {
   'nav.admin.announcements': '公告管理',
   'nav.admin.tasks': '任务与日志',
   'nav.admin.settings': '系统设置',
+  'nav.admin.affiliate': '邀请返利',
   'nav.admin.realname': '实名认证',
   'nav.terminal': '终端连接',
   'nav.transfer': '实例转移',

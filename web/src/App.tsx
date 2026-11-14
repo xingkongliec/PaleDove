@@ -95,6 +95,7 @@ const AdminRealname = def(loaders.adminRealname);
 const AdminBilling = def(loaders.adminBilling);
 const AdminInvoiceDetail = def(loaders.adminInvoiceDetail);
 const AdminPromotions = def(loaders.adminPromotions);
+const AdminAffiliate = def(loaders.adminAffiliate);
 const AdminCouponEdit = def(loaders.adminCouponEdit);
 const AdminAnnouncements = def(loaders.adminAnnouncements);
 const AdminDocuments = def(loaders.adminDocuments);
@@ -157,6 +158,7 @@ const adminNav: NavGroup[] = [
       { to: '/admin/billing', label: 'nav.admin.billing', icon: <Calculator /> },
       { to: '/admin/market', label: 'nav.admin.market', icon: <MarketIcon /> },
       { to: '/admin/promotions', label: 'nav.admin.promotions', icon: <TicketPercent /> },
+      { to: '/admin/affiliate', label: 'nav.admin.affiliate', icon: <Gift /> },
       { to: '/admin/night-market', label: 'night.adminTitle', icon: <MoonStar /> },
       { to: '/admin/announcements', label: 'nav.admin.announcements', icon: <Megaphone /> },
       { to: '/admin/documents', label: 'nav.admin.documents', icon: <BookOpen /> },
@@ -314,6 +316,7 @@ export default function App() {
         <Route path="billing/invoices/:id" element={<AdminInvoiceDetail />} />
         <Route path="market" element={<AdminMarket />} />
         <Route path="promotions" element={<AdminPromotions />} />
+        <Route path="affiliate" element={<AdminAffiliate />} />
         <Route path="night-market" element={<AdminNightMarket />} />
         <Route path="promotions/coupons/:id" element={<AdminCouponEdit />} />
         <Route path="payments" element={<Navigate to="/admin/billing?tab=recharge" replace />} />

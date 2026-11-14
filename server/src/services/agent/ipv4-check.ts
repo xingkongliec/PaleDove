@@ -9,7 +9,8 @@ import { instancePingJob as agentJob, type PingInstance } from './instance-ping.
 const TARGET_IDS = ['bj-ct', 'bj-cu', 'sh-cu', 'sh-cm', 'gd-ct', 'gd-cm'];
 const TIMEOUT_MS = 90_000;
 const CACHE_SEC = 600;
-const KEY = (id: number) => `switch:ipv4:v2:${id}`;
+// 检测口径变更后，不复用旧版仅凭 ICMP 超时得出的 blocked 缓存。
+const KEY = (id: number) => `switch:ipv4:v3:${id}`;
 const JOBS = (nodeId: number) => `switch:ipv4:jobs:${nodeId}`;
 
 type ProbeJob = ReturnType<typeof agentJob> & {
@@ -114,17 +115,23 @@ export async function saveAgentIpv4Check(nodeId: number, input: AgentIpv4CheckIn
     if (!check || check.nodeId !== nodeId || check.job.requestId !== input.requestId || check.result.status !== 'pending' || check.deadline <= Date.now()) return false;
     const inst = await load(input.id);
     if (inst.nodeId !== nodeId || check.signature !== signature(inst)) return false;
-    const unique = new Map((input.results ?? []).filter((r) => TARGET_IDS.includes(r.id)).map((r) => [r.id, r]));
-    const results = [...unique.values()].filter((r) => !r.error);
+    const unique = new Map<string, PingResultDTO | null>();
+    for (const r of input.results ?? []) {
+      if (!TARGET_IDS.includes(r.id)) continue;
+      const valid = !unique.has(r.id) && !r.error && Number.isFinite(r.loss) && r.loss >= 0 && r.loss <= 100
+        && (r.latency === null ? r.loss === 100 : Number.isFinite(r.latency) && r.latency >= 0 && r.loss < 100);
+      unique.set(r.id, valid ? r : null);
+    }
+    const results = [...unique.values()].filter((r): r is PingResultDTO => r !== null);
     const reachable = results.filter((r) => r.latency !== null && r.loss < 100).length;
     const validSource = check.job.kind !== 'dedicated' || (input.via !== undefined && ['local', 'spoof', 'spoof-l2'].includes(input.via));
-    const valid = !input.error && input.method === 'icmp' && validSource;
-    // 独立 IPv4 关机时上游可能撤回路由；全部未响应不能据此判成被墙。
+    const valid = !input.error && input.method === 'icmp' && validSource && results.length === TARGET_IDS.length;
+    // ICMP 全超时缺少 TCP / UDP 证据，不能判墙；独立 IPv4 关机还可能影响路由。
     const stopped = check.job.kind === 'dedicated' && inst.status !== 'RUNNING';
-    const status = !valid ? 'unknown' : reachable > 0 ? 'ok' : results.length === TARGET_IDS.length && !stopped ? 'blocked' : 'unknown';
+    const status = valid && reachable > 0 ? 'ok' : 'unknown';
     check.result = {
       ...check.result, status, method: valid ? 'icmp' : null,
-      reason: status === 'unknown' ? (valid && stopped && results.length === TARGET_IDS.length ? 'notRunning' : 'error') : null,
+      reason: status === 'unknown' ? (!valid ? 'error' : stopped ? 'notRunning' : 'icmpOnly') : null,
       reachable: valid ? reachable : 0, total: valid ? results.length : 0, checkedAt: new Date().toISOString(),
     };
     await save(input.id, check);

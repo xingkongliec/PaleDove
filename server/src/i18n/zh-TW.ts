@@ -538,7 +538,7 @@ export const zhTW: Record<ServerMessageKey, string> = {
   "egress.notFound": "出口不存在",
   "egress.unavailable": "該執行個體不能切換出口（主機未開啟智慧分流，或不是 NAT 執行個體）",
   "swap.unavailable": "該執行個體不支援 SWAP（僅容器方案提供）",
-  "switch.ipBlocked": "原 IPv4 在國內三網均無法 Ping 通（疑似被牆），不能切換機房，請聯絡客服處理",
+  "switch.ipBlocked": "原 IPv4 已確認在中國大陸的 ICMP、全 TCP、全 UDP 全部阻斷，且海外正常，不能切換機房，請聯絡客服處理",
   "switch.ipPending": "Agent 正在檢測原 IPv4，請等待檢測完成後切換",
   "switch.badStatus": "執行個體需要處於執行或關機狀態才能切換機房",
   "switch.noPlan": "這臺執行個體沒有關聯方案，不能切換機房",

@@ -112,6 +112,13 @@ export class AgentReleaseSource {
     return snapshot ? this.publicManifest(snapshot) : null;
   }
 
+  /** 管理员主动检查：跳过缓存期限，失败时不以旧缓存冒充最新查询结果。 */
+  async refreshManifest(): Promise<AgentManifest> {
+    const snapshot = await this.latest(true);
+    if (!snapshot) throw new Error('Agent release refresh returned no metadata');
+    return this.publicManifest(snapshot);
+  }
+
   private remember(snapshot: Snapshot) {
     this.snapshots.delete(snapshot.version);
     this.snapshots.set(snapshot.version, snapshot);
@@ -192,34 +199,41 @@ export class AgentReleaseSource {
     return { repository: this.options.repository, version, checkedAt: this.now(), files };
   }
 
-  private async latest(): Promise<Snapshot | null> {
+  private async latest(force = false): Promise<Snapshot | null> {
     this.initialize();
-    if (this.now() < this.nextCheckAt) return this.usable(this.current) ? this.current : null;
-    const pending = this.metadataPending.get('latest');
-    if (pending) return pending;
-    const task = (async () => {
-      try {
-        const raw: unknown = JSON.parse((await this.request('releases?per_page=100')).toString('utf8'));
-        if (!Array.isArray(raw)) throw new Error('Invalid Agent release list');
-        const release = raw.find((item) => {
-          const parsed = releaseSchema.safeParse(item);
-          return parsed.success && !parsed.data.draft && !parsed.data.prerelease &&
-            parsed.data.tag_name.startsWith('agent-v') && agentReleaseVersion.safeParse(parsed.data.tag_name.slice(7)).success;
-        });
-        if (!release) throw new Error('No stable Agent release');
-        const snapshot = await this.snapshotFromRelease(release);
-        this.current = snapshot;
-        this.remember(snapshot);
-        this.nextCheckAt = this.now() + RELEASE_TTL;
-        await Promise.all([this.writeCache('manifest.json', JSON.stringify(snapshot)), this.writeCache(`release-${snapshot.version}.json`, JSON.stringify(snapshot))]);
-      } catch {
-        this.nextCheckAt = this.now() + FAILURE_TTL;
-        console.warn('[AgentRelease] Release refresh failed; using the last verified cache when available');
-      }
+    if (!force && this.now() < this.nextCheckAt) return this.usable(this.current) ? this.current : null;
+    let task = this.metadataPending.get('latest');
+    if (!task) {
+      task = (async () => {
+        try {
+          const raw: unknown = JSON.parse((await this.request('releases?per_page=100')).toString('utf8'));
+          if (!Array.isArray(raw)) throw new Error('Invalid Agent release list');
+          const release = raw.find((item) => {
+            const parsed = releaseSchema.safeParse(item);
+            return parsed.success && !parsed.data.draft && !parsed.data.prerelease &&
+              parsed.data.tag_name.startsWith('agent-v') && agentReleaseVersion.safeParse(parsed.data.tag_name.slice(7)).success;
+          });
+          if (!release) throw new Error('No stable Agent release');
+          const snapshot = await this.snapshotFromRelease(release);
+          this.current = snapshot;
+          this.remember(snapshot);
+          this.nextCheckAt = this.now() + RELEASE_TTL;
+          await Promise.all([this.writeCache('manifest.json', JSON.stringify(snapshot)), this.writeCache(`release-${snapshot.version}.json`, JSON.stringify(snapshot))]);
+          return snapshot;
+        } catch (error) {
+          this.nextCheckAt = this.now() + FAILURE_TTL;
+          console.warn('[AgentRelease] Release refresh failed; using the last verified cache when available');
+          throw error;
+        }
+      })().finally(() => this.metadataPending.delete('latest'));
+      this.metadataPending.set('latest', task);
+    }
+    try {
+      return await task;
+    } catch (error) {
+      if (force) throw error;
       return this.usable(this.current) ? this.current : null;
-    })().finally(() => this.metadataPending.delete('latest'));
-    this.metadataPending.set('latest', task);
-    return task;
+    }
   }
 
   private async versionSnapshot(version?: string): Promise<Snapshot | null> {

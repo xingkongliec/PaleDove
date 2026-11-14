@@ -17,7 +17,7 @@ const NodeTestView = lazy(() => import('@/components/ping/NodeTest').then((modul
 
 const VERDICT_TONE: Record<MarketPingVerdict, 'success' | 'warning' | 'danger' | 'neutral'> = { NORMAL: 'success', PARTIAL: 'warning', ABNORMAL: 'danger', UNKNOWN: 'neutral' };
 
-/** 拨测状态标签：IP 正常 / 部分超时 / IP 异常 / 拨测中 / 未拨测 */
+/** ICMP 可达性标签；仅有 ICMP 结果不能判定 IP 被墙。 */
 export function PingVerdictTag({ ping }: { ping: MarketPingSummaryDTO }) {
   const { t } = useI18n();
   if (ping.status === 'PENDING') {
@@ -163,6 +163,7 @@ export function MarketPingDialog({ subject, onClose }: { subject: PingSubject | 
                 <NodeTestView nodes={[{ label: subject.title, country: subject.country, testedAt: p.testedAt ?? p.requestedAt, method: p.method ?? 'icmp', results: p.results, targets: p.targets }]} />
               </Suspense>
               <p className="text-[11px] leading-relaxed text-fg-4">{t('market.ping.rule')}</p>
+              <p className="text-xs leading-relaxed text-fg-3">{t('market.ping.policy')}</p>
             </>
           )}
         </div>

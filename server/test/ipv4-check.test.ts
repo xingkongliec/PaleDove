@@ -64,14 +64,34 @@ describe('on-demand agent IPv4 check', () => {
     expect(await checkIpv4(inst.id)).toMatchObject({ status: 'unknown', method: null, reason: 'error' });
   });
 
-  it('only marks complete ICMP timeouts as blocked', async () => {
+  it('keeps complete ICMP timeouts inconclusive without TCP, UDP and overseas evidence', async () => {
     await checkIpv4(inst.id);
     await finish({ results: results(false) });
-    expect(await checkIpv4(inst.id)).toMatchObject({ status: 'blocked', reachable: 0, total: 6 });
+    expect(await checkIpv4(inst.id)).toMatchObject({ status: 'unknown', method: 'icmp', reason: 'icmpOnly', reachable: 0, total: 6 });
     for (const partial of [results(false).slice(1), Array(6).fill(results(false)[0]), results(false).map((r, i) => ({ ...r, ...(i === 0 ? { error: 'DNS failed' } : {}) }))]) {
       await checkIpv4(inst.id, true);
       await finish({ results: partial });
       expect((await checkIpv4(inst.id)).status).toBe('unknown');
+    }
+  });
+
+  it('does not turn partial ICMP timeouts into a blocked IP', async () => {
+    await checkIpv4(inst.id);
+    await finish({ results: results(false).map((row, index) => index ? row : { ...row, latency: 25, loss: 0 }) });
+    expect(await checkIpv4(inst.id)).toMatchObject({ status: 'ok', reachable: 1, total: 6, reason: null });
+  });
+
+  it('rejects contradictory losses, invalid latency and duplicate targets as reachability evidence', async () => {
+    for (const rows of [
+      results().map((row, index) => index ? row : { ...row, latency: -1 }),
+      results().map((row, index) => index ? row : { ...row, loss: 100 }),
+      results(false).map((row, index) => index ? row : { ...row, loss: 0 }),
+      results().map((row, index) => index ? row : { ...row, loss: Number.NaN }),
+      [...results(), results()[0]],
+    ]) {
+      await checkIpv4(inst.id, true);
+      await finish({ results: rows });
+      expect(await checkIpv4(inst.id)).toMatchObject({ status: 'unknown', method: null, reason: 'error' });
     }
   });
 

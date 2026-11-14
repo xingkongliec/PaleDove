@@ -63,6 +63,7 @@ web/src/pages/
     instances/            实例管理
     catalog/              产品、套餐与镜像
     billing/              财务与优惠活动
+    affiliate/            邀请返利设置与返利明细
     settings/             系统设置
   instance/               用户与管理员共用的实例详情
   market/                 交易市场

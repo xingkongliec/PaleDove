@@ -198,7 +198,7 @@ export const MARKET_PING_CONTROLS = [
   { id: 'control-quad9', host: '9.9.9.9', port: 443 },
 ] as const;
 
-/** 异常仅用于两轮国内三网全不通、同期境外对照可达的疑似屏蔽；证据不足为 UNKNOWN。 */
+/** ABNORMAL 保留给完整的大陆 ICMP、全 TCP、全 UDP 阻断且境外正常的证据；当前 ICMP 拨测不产生此结论。 */
 export type MarketPingVerdict = 'NORMAL' | 'PARTIAL' | 'ABNORMAL' | 'UNKNOWN';
 export type MarketPingStatus = 'PENDING' | 'DONE' | 'FAILED';
 /** 未能拨测的原因：agent 宿主机 Agent 不在线或版本过旧；timeout 超时未回传；noIpv4 实例没有 IPv4；start 独立 IPv4 实例无法开机；error Agent 报错 */
@@ -229,32 +229,18 @@ function pingResultsById(results: PingResultDTO[], targets: readonly { id: strin
   return unique;
 }
 
-/** 至少三个大陆省份、三网各两个独立目标全部超时，才有资格进入屏蔽复核。 */
-export function marketPingBlockCandidate(results: PingResultDTO[], targets: PingTarget[]): boolean {
-  const unique = pingResultsById(results, targets);
-  if (!targets.length || targets.some(t => !unique.has(t.id))) return false;
-  const mainland = targets.filter(t => pingRegionNeedsIsp(t.province) && t.isp);
-  const address = (t: PingTarget) => unique.get(t.id)!.targetIp;
-  return mainland.every(t => address(t)) && new Set(mainland.map(address)).size >= 6 && new Set(mainland.map(t => t.province)).size >= 3
-    && PING_ISPS.every(isp => new Set(mainland.filter(t => t.isp === isp).map(address)).size >= 2)
-    && mainland.every(t => !pingReplied(unique.get(t.id)!));
-}
-
-/** 部分超时不代表被墙；历史快照和不完整的测试不能提供屏蔽结论。 */
+/** ICMP 只描述目标可达性；境外对照及重复超时均不能证明全 TCP、全 UDP 被阻断。 */
 export function marketPingVerdict(results: PingResultDTO[], targets: PingTarget[] = PING_TARGETS, verification?: MarketPingVerification): { verdict: MarketPingVerdict; failedProvinces: string[]; reachable: number; total: number } {
   const unique = pingResultsById(results, targets);
+  for (const [id, result] of pingResultsById(verification?.results ?? [], targets)) {
+    if (pingReplied(result)) unique.set(id, result);
+  }
   const rows = [...unique.values()];
   const reachable = rows.filter(pingReplied).length;
   const total = rows.length;
   const failedProvinces = [...new Set(targets.filter(t => pingRegionNeedsIsp(t.province)).map(t => t.province))]
     .filter(province => targets.filter(t => t.province === province).every(t => unique.has(t.id) && !pingReplied(unique.get(t.id)!)));
-  const controlOK = (controls: PingResultDTO[]) => new Set([...pingResultsById(controls, MARKET_PING_CONTROLS).values()]
-    .filter(r => MARKET_PING_CONTROLS.some(t => t.id === r.id && t.host === r.targetIp) && pingReplied(r)).map(r => r.id));
-  const firstControls = controlOK(verification?.controls ?? []);
-  const stableControls = [...controlOK(verification?.confirmationControls ?? [])].filter(id => firstControls.has(id));
-  const mainlandReply = rows.some(r => pingRegionNeedsIsp(pingTarget(r.id, targets)!.province) && pingReplied(r));
-  let verdict: MarketPingVerdict = total > 0 && total === targets.length && reachable === total ? 'NORMAL' : reachable > 0 ? 'PARTIAL' : 'UNKNOWN';
-  if (!mainlandReply && verification && stableControls.length >= 2 && marketPingBlockCandidate(rows, targets) && marketPingBlockCandidate(verification.results, targets)) verdict = 'ABNORMAL';
+  const verdict: MarketPingVerdict = total > 0 && total === targets.length && reachable === total ? 'NORMAL' : reachable > 0 ? 'PARTIAL' : 'UNKNOWN';
   return { verdict, failedProvinces, reachable, total };
 }
 

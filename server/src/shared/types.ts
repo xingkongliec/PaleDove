@@ -49,7 +49,7 @@ export type DateString = string;
 export interface InstanceIpv4CheckDTO {
   status: 'pending' | 'ok' | 'blocked' | 'unknown';
   method: 'icmp' | null;
-  reason: 'agentOffline' | 'agentUpgrade' | 'noIpv4' | 'timeout' | 'error' | 'notRunning' | null;
+  reason: 'agentOffline' | 'agentUpgrade' | 'noIpv4' | 'timeout' | 'error' | 'notRunning' | 'icmpOnly' | null;
   ipv4: string | null;
   reachable: number;
   total: number;
@@ -954,6 +954,13 @@ export interface ProxySiteDTO {
   status: SiteStatus;
   lastError: string | null;
   createdAt: DateString;
+}
+
+/** 管理员主动查询 Agent 下载源版本。 */
+export interface AgentVersionCheckDTO {
+  version: string;
+  source: 'github' | 'local';
+  checkedAt: DateString;
 }
 
 export interface NodeResourcesDTO {

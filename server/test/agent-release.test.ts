@@ -38,7 +38,7 @@ function fixture(overrides: { fetch?: typeof fetch; cacheDirectory?: string; now
   });
   const cacheDirectory = overrides.cacheDirectory ?? temporary();
   const source = new AgentReleaseSource({ repository: 'test/paledove', token: 'test-private-token', cacheDirectory, fetch: overrides.fetch ?? request, now: overrides.now });
-  return { source, request, cacheDirectory, setRelease: (value: ReturnType<typeof release>) => { current = value; }, setOffline: () => { offline = true; } };
+  return { source, request, cacheDirectory, setRelease: (value: ReturnType<typeof release>) => { current = value; }, setOffline: (value = true) => { offline = value; } };
 }
 
 describe('GitHub Agent release source', () => {
@@ -117,6 +117,48 @@ describe('GitHub Agent release source', () => {
     expect((await source.manifest())?.version).toBe('0.8.0');
     expect(await source.binary('amd64', '0.7.1', digest(data.amd64))).toEqual(data.amd64);
     await expect(source.binary('amd64', '0.7.1', 'f'.repeat(64))).rejects.toThrow('checksum changed');
+  });
+
+  it('bypasses a fresh metadata cache immediately and coalesces manual checks', async () => {
+    const { source, request, setRelease } = fixture();
+    await source.manifest();
+    setRelease(release('0.8.0', 3));
+    expect((await source.manifest())?.version).toBe('0.7.1');
+    const results = await Promise.all(Array.from({ length: 5 }, () => source.refreshManifest()));
+    expect(results.every(result => result.version === '0.8.0')).toBe(true);
+    expect(source.cachedManifest()?.version).toBe('0.8.0');
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a manual refresh failure instead of passing off the previous cache as a successful check', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { source, request, setRelease, setOffline } = fixture();
+    await source.manifest();
+    setOffline();
+    await expect(source.refreshManifest()).rejects.toThrow('offline');
+    expect((await source.manifest())?.version).toBe('0.7.1');
+    expect(request).toHaveBeenCalledTimes(2);
+    setOffline(false);
+    setRelease(release('0.8.0', 3));
+    expect((await source.refreshManifest()).version).toBe('0.8.0');
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it('joins a failed background refresh but preserves strict errors for the manual caller', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let clock = 10_000;
+    let rejectResponse!: (reason: Error) => void;
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(json([release()]))
+      .mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { rejectResponse = reject; }));
+    const { source } = fixture({ fetch: request, now: () => clock });
+    await source.manifest();
+    clock += RELEASE_TTL + 1;
+    expect(source.cachedManifest()?.version).toBe('0.7.1');
+    const manual = expect(source.refreshManifest()).rejects.toThrow('offline');
+    rejectResponse(new Error('offline'));
+    await manual;
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(source.cachedManifest()?.version).toBe('0.7.1');
   });
 
   it('loads a pinned version by its exact release tag after a panel restart', async () => {

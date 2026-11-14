@@ -547,7 +547,7 @@ export const en: Record<ServerMessageKey, string> = {
   'egress.notFound': 'Egress not found',
   'egress.unavailable': 'This instance cannot switch egress (smart routing is off on its host, or it is not a NAT instance)',
   'swap.unavailable': 'SWAP is not available for this instance (container plans only)',
-  'switch.ipBlocked': 'The original IPv4 cannot be pinged from any mainland China carrier (likely blocked). Switching is not available; contact support',
+  'switch.ipBlocked': 'ICMP, all TCP and all UDP to the original IPv4 are confirmed blocked in mainland China while access overseas works normally. Switching is not available; contact support',
   'switch.ipPending': 'The agent is checking the original IPv4. Wait for the check to finish before switching',
   'switch.badStatus': 'The instance must be running or stopped to switch data centers',
   'switch.noPlan': 'This instance has no plan and cannot switch data centers',

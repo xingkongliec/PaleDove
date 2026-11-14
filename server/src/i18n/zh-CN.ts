@@ -557,7 +557,7 @@ export const zhCN = {
   'egress.notFound': '出口不存在',
   'egress.unavailable': '该实例不能切换出口（宿主机未开启智能分流，或不是 NAT 实例）',
   'swap.unavailable': '该实例不支持 SWAP（仅容器套餐提供）',
-  'switch.ipBlocked': '原 IPv4 在国内三网均无法 Ping 通（疑似被墙），不能切换机房，请联系客服处理',
+  'switch.ipBlocked': '原 IPv4 已确认在中国大陆的 ICMP、全 TCP、全 UDP 全部阻断，且海外正常，不能切换机房，请联系客服处理',
   'switch.ipPending': 'Agent 正在检测原 IPv4，请等待检测完成后切换',
   'switch.badStatus': '实例需要处于运行或关机状态才能切换机房',
   'switch.noPlan': '这台实例没有关联套餐，不能切换机房',

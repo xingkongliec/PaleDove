@@ -25,7 +25,9 @@ import {
   verifyNode,
 } from '../../services/nodes.ts';
 import { clearHostReport, getHostReport, issueAgentInstallToken } from '../../services/agent/agent.ts';
-import { agentManifest } from '../../services/agent/agent-binary.ts';
+import { agentManifest, refreshAgentManifest } from '../../services/agent/agent-binary.ts';
+import { config } from '../../config.ts';
+import type { AgentVersionCheckDTO } from '../../shared/index.ts';
 import { getPingResults, requestPingRun } from '../../services/agent/ping.ts';
 import { pingObjectEnabled, syncPingObject } from '../../services/ping-settings.ts';
 import { getSetting } from '../../lib/settings.ts';
@@ -206,6 +208,13 @@ function certificateDto(cert: ClientCertificate): PanelCertificateDTO {
 
 export default async function adminNodeRoutes(app: FastifyInstance) {
   app.addHook('preHandler', adminGuard);
+
+  app.post('/api/admin/agent/check-update', async (_req, reply): Promise<AgentVersionCheckDTO> => {
+    reply.header('cache-control', 'no-store');
+    const manifest = await refreshAgentManifest();
+    return { version: manifest.version, source: config.AGENT_RELEASE_REPOSITORY ? 'github' : 'local', checkedAt: new Date().toISOString() };
+  });
+
   // 修改成功后，首页与购买页使用的在售目录缓存（Redis）立即失效
   app.addHook('onResponse', async (req, reply) => {
     if (req.method !== 'GET' && reply.statusCode < 400) await invalidateCache('catalog');

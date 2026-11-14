@@ -26,9 +26,10 @@ describe('market ping verdict', () => {
     expect(marketPingVerdict([]).verdict).toBe('UNKNOWN');
     expect(marketPingVerdict([{ id: 'unknown', latency: null, loss: 100 }]).verdict).toBe('UNKNOWN');
   });
-  it('requires complete, repeated mainland failures and two stable international controls', () => {
-    expect(marketPingVerdict(allTimeouts(), PING_TARGETS, verification()).verdict).toBe('ABNORMAL');
-    expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), results: results() }).verdict).toBe('UNKNOWN');
+  it('never infers all-protocol blocking from repeated ICMP failures with working international controls', () => {
+    expect(marketPingVerdict(allTimeouts(), PING_TARGETS, verification()).verdict).toBe('UNKNOWN');
+    expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), results: results() })).toMatchObject({ verdict: 'NORMAL', reachable: 93, total: 93 });
+    expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), results: [results()[0]] })).toMatchObject({ verdict: 'PARTIAL', reachable: 1, total: 93 });
     expect(marketPingVerdict(allTimeouts().slice(0, -1), PING_TARGETS, verification()).verdict).toBe('UNKNOWN');
     expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), results: allTimeouts().slice(0, -1) }).verdict).toBe('UNKNOWN');
     expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), controls: controls().map(r => ({ ...r, latency: null, loss: 100 })) }).verdict).toBe('UNKNOWN');
@@ -36,13 +37,13 @@ describe('market ping verdict', () => {
     expect(marketPingVerdict(allTimeouts(), PING_TARGETS, { ...verification(), controls: controls().slice(0, 2), confirmationControls: controls().slice(1) }).verdict).toBe('UNKNOWN');
     expect(marketPingVerdict(results(['北京']), PING_TARGETS, verification()).verdict).toBe('PARTIAL');
   });
-  it('requires sufficient distinct mainland coverage and ignores regional targets for blocking', () => {
+  it('keeps limited coverage, regional replies and malformed ICMP results from proving blocking', () => {
     for (const targets of [PING_TARGETS.slice(0, 3), PING_TARGETS.filter(t => t.isp === 'CT'), PING_TARGETS.map(t => ({ ...t, province: '香港', isp: null }))]) {
       expect(marketPingVerdict(allTimeouts(), targets, verification()).verdict).toBe('UNKNOWN');
     }
     const targets = [...PING_TARGETS, { ...PING_TARGETS[0], id: 'hk', province: '香港', isp: null }];
     const rows = [...allTimeouts(), { id: 'hk', latency: 20, loss: 0 }];
-    expect(marketPingVerdict(rows, targets, { ...verification(), results: rows }).verdict).toBe('ABNORMAL');
+    expect(marketPingVerdict(rows, targets, { ...verification(), results: rows }).verdict).toBe('PARTIAL');
     const malformed = allTimeouts().map((r, i) => i ? r : { ...r, error: 'DNS error' });
     expect(marketPingVerdict(malformed, PING_TARGETS, verification()).verdict).toBe('UNKNOWN');
     expect(marketPingVerdict(allTimeouts().map(r => ({ ...r, targetIp: '198.51.100.1' })), PING_TARGETS, verification()).verdict).toBe('UNKNOWN');
@@ -315,12 +316,12 @@ describe('market listing ping', () => {
     expect((await request('GET', `/api/public/market/${again.json().id}/ping`, '')).statusCode).toBe(404);
   }, 60_000);
 
-  it('only marks verified two-round mainland blocking as abnormal, and recovers positive second-round replies', async () => {
+  it('keeps ICMP-only failures inconclusive and recovers positive second-round replies', async () => {
     await agentOnline(natNodeId);
     const allTimeouts = results(PING_TARGETS.map(t => t.province));
     const controls = MARKET_PING_CONTROLS.map(t => ({ id: t.id, latency: 30, loss: 0, targetIp: t.host }));
     const cases: [number, Parameters<typeof finish>[1]['verification'], string][] = [
-      [0, { results: allTimeouts, controls, confirmationControls: controls }, 'ABNORMAL'],
+      [0, { results: allTimeouts, controls, confirmationControls: controls }, 'UNKNOWN'],
       [1, { results: allTimeouts, controls, confirmationControls: [] }, 'UNKNOWN'],
       [2, { results: results(), controls, confirmationControls: controls }, 'NORMAL'],
       [3, undefined, 'UNKNOWN'],
@@ -340,6 +341,18 @@ describe('market listing ping', () => {
       await request('DELETE', `/api/market/listings/${listingId}`, sellerCookie);
     }
   }, 60_000);
+
+  it('re-evaluates historical ICMP snapshots without retaining the old abnormal verdict', () => {
+    const allTimeouts = results(PING_TARGETS.map(t => t.province));
+    const controls = MARKET_PING_CONTROLS.map(t => ({ id: t.id, latency: 30, loss: 0, targetIp: t.host }));
+    const snapshot = JSON.parse(JSON.stringify({
+      status: 'DONE', requestedAt: new Date().toISOString(), method: 'icmp', via: 'local', verdict: 'ABNORMAL',
+      results: allTimeouts, targets: PING_TARGETS,
+      verification: { results: allTimeouts, controls, confirmationControls: controls },
+    }));
+    expect(ping.pingSummary(snapshot)).toMatchObject({ status: 'DONE', verdict: 'UNKNOWN', reachable: 0, total: 93 });
+    expect(ping.pingDetail(snapshot, 'KVM_IPV4')).toMatchObject({ verdict: 'UNKNOWN', ipv4: 'DEDICATED' });
+  });
 
   it('rejects TCP fallback, wrong source, incomplete results, DNS failures and contradictory loss reports', async () => {
     await agentOnline(natNodeId);

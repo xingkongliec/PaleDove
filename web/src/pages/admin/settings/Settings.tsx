@@ -17,19 +17,19 @@ import { MailSettingsCard } from './MailSettings';
 import { LogoMark } from '@/layouts/AppShell';
 import { MaintenanceSettingsCard } from './MaintenanceSettings';
 import { PopupSettingsCard } from './PopupSettings';
-import { AffRecords } from './AffRecords';
 
-type Tab = 'site' | 'mail' | 'maintenance' | 'lifecycle' | 'aff' | 'market' | 'sites' | 'oauth' | 'cert' | 'general' | 'popups';
-const TABS: Tab[] = ['site', 'mail', 'maintenance', 'lifecycle', 'aff', 'market', 'sites', 'oauth', 'cert', 'popups', 'general'];
+type Tab = 'site' | 'mail' | 'maintenance' | 'lifecycle' | 'market' | 'sites' | 'oauth' | 'cert' | 'general' | 'popups';
+const TABS: Tab[] = ['site', 'mail', 'maintenance', 'lifecycle', 'market', 'sites', 'oauth', 'cert', 'popups', 'general'];
 
 /** 系统设置：按类别分标签，每个标签单独保存；标签写在地址栏（?tab=），可直接链接 */
 export default function AdminSettings() {
   const t = useT();
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab');
-  const q = useQuery({ queryKey: ['admin-settings'], queryFn: () => api.get<AdminSettingsDTO>('/admin/settings'), enabled: raw !== 'payment' });
+  const q = useQuery({ queryKey: ['admin-settings'], queryFn: () => api.get<AdminSettingsDTO>('/admin/settings'), enabled: !['payment', 'legal', 'aff'].includes(raw ?? '') });
   if (raw === 'payment') return <Navigate to="/admin/billing?tab=payment" replace />;
   if (raw === 'legal') return <Navigate to="/admin/documents" replace />;
+  if (raw === 'aff') return <Navigate to="/admin/affiliate" replace />;
   const tab = TABS.find((value) => value === raw) ?? 'site';
   if (!q.data) return q.error ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : <PageLoading />;
   const data = q.data;
@@ -40,7 +40,6 @@ export default function AdminSettings() {
     popups: <PopupSettingsCard />,
     general: <GeneralSettingsCard value={data} />,
     lifecycle: <LifecycleSettings value={data} />,
-    aff: <div className="space-y-4"><AffSettings value={data} /><AffRecords /></div>,
     market: <MarketSettings value={data} />,
     sites: <SiteBindingSettings value={data} />,
     oauth: <OAuthSettings />,
@@ -58,7 +57,6 @@ export default function AdminSettings() {
           { value: 'mail', label: t('adminSettings.tab.mail') },
           { value: 'maintenance', label: t('maintenance.title') },
           { value: 'lifecycle', label: t('adminSettings.lifecycle') },
-          { value: 'aff', label: t('adminSettings.tab.aff') },
           { value: 'market', label: t('adminSettings.tab.market') },
           { value: 'sites', label: t('adminSettings.tab.sites') },
           { value: 'oauth', label: t('oauthAdmin.title') },
@@ -294,40 +292,6 @@ function LifecycleSettings({ value }: { value: AdminSettingsDTO }) {
               transferFeeValue: form.transferFeeValue,
               nodeSwitchFee: form.nodeSwitchFee,
             })
-          }
-        />
-      </CardBody>
-    </Card>
-  );
-}
-
-/** 推广返利：开关、佣金比例与转入余额的门槛 */
-function AffSettings({ value }: { value: AdminSettingsDTO }) {
-  const t = useT();
-  const { form, set } = useForm(value);
-  const save = useSaveSettings();
-  return (
-    <Card>
-      <CardBody>
-        <FormRow label={t('adminSettings.affEnabled')} hint={t('adminSettings.affEnabledHint')}>
-          <Switch checked={form.affEnabled} onCheckedChange={(v) => set('affEnabled', v)} label={t('adminSettings.affEnabledLabel')} />
-        </FormRow>
-        <FormRow label={t('adminSettings.affRateNew')} hint={t('adminSettings.affRateNewHint')}>
-          <InputGroup type="number" min={0} max={100} step={0.1} value={String(form.affRateNew)} onChange={(e) => set('affRateNew', Number(e.target.value))} suffix="%" className="w-32" />
-        </FormRow>
-        <FormRow label={t('adminSettings.affRateRenew')} hint={t('adminSettings.affRateRenewHint')}>
-          <InputGroup type="number" min={0} max={100} step={0.1} value={String(form.affRateRenew)} onChange={(e) => set('affRateRenew', Number(e.target.value))} suffix="%" className="w-32" />
-        </FormRow>
-        <FormRow label={t('adminSettings.affFreezeDays')} hint={t('adminSettings.affFreezeDaysHint')}>
-          <InputGroup type="number" min={0} max={365} value={String(form.affFreezeDays)} onChange={(e) => set('affFreezeDays', Number(e.target.value))} suffix={t('batch.daysUnit')} className="w-32" />
-        </FormRow>
-        <FormRow label={t('adminSettings.affMinWithdraw')} hint={t('adminSettings.affMinWithdrawHint')}>
-          <InputGroup type="number" min={0} value={String(form.affMinWithdraw)} onChange={(e) => set('affMinWithdraw', Number(e.target.value))} prefix={form.currency} className="w-32" />
-        </FormRow>
-        <SaveBar
-          loading={save.isPending}
-          onSave={() =>
-            save.mutate({ affEnabled: form.affEnabled, affRateNew: form.affRateNew, affRateRenew: form.affRateRenew, affFreezeDays: form.affFreezeDays, affMinWithdraw: form.affMinWithdraw })
           }
         />
       </CardBody>
