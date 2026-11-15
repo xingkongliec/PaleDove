@@ -7,7 +7,7 @@
 - 按面板下发的升级指令自动升级。
 - 节点测试（宿主机设置中启用后）：每小时向内置的国内 31 个省份 × 三网共 93 个目标发送 ICMP Ping（每个目标 4 次，取平均延迟与丢包率；没有原始套接字权限时退回 TCP 连接测速），结果展示在购买页「节点测试」。
 - 实例资源上报（0.5.0 起，能力 `instance-stats`）：实例管理页面打开期间，每 3 秒通过本机 Incus 读取该实例的实时状态并上报，页面显示「Agent 上报」。
-- 宿主机侧实例流量（0.8.0 起，能力 `host-traffic`）：每次心跳读取受管实例 eth0 / eth1 对应 veth / tap 的网卡计数，无需打开实例页面，也不依赖虚拟机内的 incus-agent。
+- 宿主机侧实例流量（0.8.3 起，能力 `public-traffic-v1`）：每次心跳读取受管实例 eth0 / eth1 对应 veth / tap 的公网计数，排除内网通信，无需打开实例页面，也不依赖虚拟机内的 incus-agent。
 - SSH 备用执行（0.8.0 起，能力 `guest-exec`）：Incus 无法联系虚拟机内 Agent 时，面板下发有期限的签名任务，由宿主机通过 SSH 执行；需要 OpenSSH 客户端、实例允许 root 密码登录且保存的密码有效。
 - 智能分流依赖修复（0.8.1 起）：安装脚本补齐 `ip`、`iptables`、`wg`；已有宿主机首次启用出口时，Agent 检查并通过系统包管理器补装缺少的依赖。WireGuard 只安装 `wireguard-tools`，不替换内核或使用 `wg-quick` 修改宿主机默认路由。失败配置每分钟重试，包安装失败后 5 分钟内不重复安装；手动补装依赖会在下一轮重试中识别。
 
@@ -94,7 +94,7 @@ agent/
     ├── upgrade/          自动升级
     ├── nodetest/         节点测试（ICMP / TCP Ping）
     ├── instances/        实例资源上报
-    ├── traffic/          宿主机 veth / tap 流量采样
+    ├── traffic/          宿主机 veth / tap 公网计数，排除内网通信
     ├── guestexec/        虚拟机 SSH 备用执行与结果重传
     └── egress/           智能分流（WireGuard 隧道、策略路由、SOCKS5 / HTTP 网关）
 ```
@@ -121,6 +121,8 @@ NAT 绑定宿主机公网地址（云厂商 1:1 NAT 使用默认出口），独�
 
 ## 构建
 
+0.8.3 新增 `public-traffic-v1`：通过 nftables netdev ingress / egress 只累计公网单播通信，排除私网、共享地址、IPv6 ULA、广播 / 组播、宿主机及同节点实例地址，VPC 网卡不计费。需要 Linux 5.16+、nftables 1.0.1+ 与 root 权限。安装脚本会补装 nftables，仅升级二进制的旧宿主机需手动补装或重跑脚本。能力、采集状态与样本口径经签名心跳校验；采集失败时停止上报计费用量，日志和后台显示错误，不回退整张网卡流量。计费边界、代理中转和历史数据说明见 [实例访问与网络](../docs/INSTANCE_ACCESS.md)。
+
 0.8.0 的新能力、网络接入条件和排障说明见 [实例访问与网络](../docs/INSTANCE_ACCESS.md)。Agent 自升级只替换二进制；0.8.1 起启用智能分流时会按需补装出口依赖（支持 apt-get / dnf / yum / apk，需要 Linux root 权限，单次最多等待 2 分钟）。现有宿主机若没有 `ssh`，仍需补装 OpenSSH 客户端或重跑 Agent 安装脚本。
 
 ```bash
@@ -128,6 +130,8 @@ pnpm build:agent        # 在仓库根目录执行，输出 agent/dist/paledove-
 pnpm build:agent:release # 额外输出 dist/release/ 下的版本化二进制与独立校验清单，供发布到 GitHub
 pnpm test:agent         # go test ./...
 ```
+
+发布流程还会在独立 Linux 网络命名空间内创建 veth 对，实际发送 IPv4 / IPv6 私网与模拟公网数据包，验证私网计数不增加、公网双向计数增加，以及新增本地地址后停止计费。该测试不会连接真实网络；本地 Windows 只执行单元测试。在安装了 nftables、iproute2、iputils-ping、util-linux 的 Linux 上，可在 `agent/` 内以 root 执行 `PALEDOVE_TRAFFIC_NETNS_TEST=1 go test -count=1 ./internal/traffic -run '^TestPublicTrafficNetworkNamespace$' -v`。
 
 构建入口为 `./cmd/paledove-agent`，版本通过 `-ldflags "-X github.com/paledove/agent/internal/buildinfo.Version=x.y.z"` 写入（见 [构建脚本](scripts/build.mjs)）。
 

@@ -51,7 +51,27 @@ describe('instance access and host-side accounting', () => {
     if (directory && dirname(directory) === resolve(tmpdir()) && basename(directory).startsWith('paledove-instance-access-')) rmSync(directory, { recursive: true, force: true });
   });
 
-  const sample = (rx: number, tx: number, generation = 'boot:uuid:1') => [{ name: instance.name, interfaces: { eth0: { generation, rx, tx } } }];
+  const sample = (rx: number, tx: number, generation = 'boot:uuid:1') => [{ name: instance.name, scope: 'public-v1', interfaces: { eth0: { generation, rx, tx } } }];
+
+  it('never bills unfiltered Incus totals or legacy host reports, including live usage', async () => {
+    await db.instance.update({ where: { id: instance.id }, data: { traffic: 1, lastRxCounter: 0n, lastTxCounter: 0n, trafficCounters: { source: 'host', interfaces: { eth0: { generation: 'legacy', rx: 1, tx: 1 } } } } });
+    const key = `mock:incus:access:inst:${instance.name}`;
+    const rec = JSON.parse((await redis.get(key))!);
+    rec.rx = 10 * 1024 ** 3; rec.tx = 20 * 1024 ** 3;
+    await redis.set(key, JSON.stringify(rec));
+    const { collectNode, getLiveState } = await import('../src/services/metrics.ts');
+    await collectNode(node);
+    await traffic.saveHostTraffic(node.id, [{ name: instance.name, interfaces: { eth0: { generation: 'raw', rx: rec.rx, tx: rec.tx } } }], 90);
+    const row = await db.instance.findUniqueOrThrow({ where: { id: instance.id } });
+    expect([row.trafficIn, row.trafficOut, row.trafficThrottled]).toEqual([0n, 0n, false]);
+    expect(await db.trafficDaily.count({ where: { instanceId: instance.id } })).toBe(0);
+    expect(await db.task.count({ where: { instanceId: instance.id } })).toBe(0);
+    const live = await getLiveState({ ...row, node });
+    expect([live.trafficIn, live.trafficOut, live.trafficUsed]).toEqual([0, 0, 0]);
+    expect(live.netRx).toBeGreaterThanOrEqual(rec.rx);
+    await db.instance.update({ where: { id: instance.id }, data: { traffic: 0 } });
+    await redis.del(`state:cache:${instance.id}`);
+  });
 
   it('preserves traffic baselines across reporting retries, missing interfaces and billing resets', async () => {
     await traffic.saveHostTraffic(node.id, sample(1000, 2000), 100);
@@ -128,16 +148,18 @@ describe('instance access and host-side accounting', () => {
     const path = '/api/agent/nodes/report';
     const timestamp = String(Date.now());
     const nonce = 'instance-access-test-report';
-    const body = JSON.stringify({ cpu: 0, load: [0, 0, 0], uptime: 1, release: '0.8.0', capabilities: ['host-traffic', 'guest-exec'], traffic: sample(5000, 6000) });
+    const body = JSON.stringify({ cpu: 0, load: [0, 0, 0], uptime: 1, release: '0.8.3', capabilities: ['public-traffic-v1', 'guest-exec'], trafficAccounting: { scope: 'public-v1', ready: true }, traffic: sample(5000, 6000) });
     const res = await app.inject({ method: 'POST', url: path, payload: body, headers: {
       'content-type': 'application/json', 'x-paledove-node': String(node.id), 'x-paledove-timestamp': timestamp,
       'x-paledove-nonce': nonce, 'x-paledove-signature': hmacHex(secret, signingPayload('POST', path, timestamp, nonce, bodyHash(body))),
     } });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.headers['x-paledove-signature']).toBeTruthy();
-    expect(res.json().traffic).toEqual({ project: 'default', names: [instance.name] });
+    expect(res.json().traffic).toMatchObject({ project: 'default', names: [instance.name], scope: 'public-v1' });
+    const current = await db.instance.findUniqueOrThrow({ where: { id: instance.id } });
+    expect(res.json().traffic.excludeCidrs).toEqual(expect.arrayContaining([node.publicIp, node.natCidr, node.ipv6Subnet, current.privateIp]));
     expect(res.json().guestJobs).toEqual([]);
-    expect((await db.instance.findUniqueOrThrow({ where: { id: instance.id } })).trafficCounters).toMatchObject({ source: 'host', at: Number(timestamp) });
+    expect(current.trafficCounters).toMatchObject({ source: 'host-public-v1', at: Number(timestamp) });
   });
 
   it('proxies serial console data and rejects cross-site console connections', async () => {
@@ -148,5 +170,29 @@ describe('instance access and host-side accounting', () => {
     const denied = await app.injectWS(`/api/instances/${instance.id}/console?type=vga`, { headers: { host: 'localhost', origin: 'https://other.example', cookie: userCookie } });
     const code = await new Promise<number>((resolve) => denied.once('close', resolve));
     expect(code).toBe(1008);
+  });
+
+  it('ignores signed traffic from legacy agents and collectors that are not ready', async () => {
+    const { issueAgentToken, signingPayload, bodyHash, hmacHex } = await import('../src/services/agent/agent.ts');
+    const secret = await issueAgentToken(node.id);
+    const before = await db.instance.findUniqueOrThrow({ where: { id: instance.id } });
+    const path = '/api/agent/nodes/report';
+    for (const [index, extra] of [
+      { capabilities: ['host-traffic'] },
+      { capabilities: ['public-traffic-v1'], trafficAccounting: { scope: 'public-v1', ready: false, error: 'nft not available' } },
+      { capabilities: ['public-traffic-v1'], trafficAccounting: { scope: 'public-v1', ready: true }, traffic: [{ name: instance.name, interfaces: { eth0: { generation: 'raw', rx: 99e9, tx: 99e9 } } }] },
+    ].entries()) {
+      const timestamp = String(Date.now());
+      const nonce = `traffic-ignore-test-report-${index}`;
+      const body = JSON.stringify({ cpu: 0, load: [0, 0, 0], uptime: 1, traffic: sample(99e9, 99e9), ...extra });
+      const res = await app.inject({ method: 'POST', url: path, payload: body, headers: {
+        'content-type': 'application/json', 'x-paledove-node': String(node.id), 'x-paledove-timestamp': timestamp,
+        'x-paledove-nonce': nonce, 'x-paledove-signature': hmacHex(secret, signingPayload('POST', path, timestamp, nonce, bodyHash(body))),
+      } });
+      expect(res.statusCode, res.body).toBe(200);
+      if (index === 0) expect(res.json().traffic).toBeUndefined();
+    }
+    const after = await db.instance.findUniqueOrThrow({ where: { id: instance.id } });
+    expect([after.trafficIn, after.trafficOut, after.trafficCounters]).toEqual([before.trafficIn, before.trafficOut, before.trafficCounters]);
   });
 });

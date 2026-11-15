@@ -38,23 +38,24 @@ const (
 
 // Report 为上报给面板的宿主机状态（字段与面板 /api/agent/nodes/report 的校验一致）
 type Report struct {
-	Version      int                 `json:"version"`
-	Release      string              `json:"release"`
-	CPU          float64             `json:"cpu"`
-	Cores        int                 `json:"cores"`
-	Load         [3]float64          `json:"load"`
-	Uptime       float64             `json:"uptime"`
-	Memory       *hostinfo.Usage     `json:"memory,omitempty"`
-	Swap         *hostinfo.Usage     `json:"swap,omitempty"`
-	Disk         *hostinfo.DiskUsage `json:"disk,omitempty"`
-	Processes    int                 `json:"processes"`
-	Hostname     string              `json:"hostname,omitempty"`
-	OS           string              `json:"os,omitempty"`
-	Kernel       string              `json:"kernel,omitempty"`
-	Arch         string              `json:"arch"`
-	Incus        incus.Info          `json:"incus"`
-	Capabilities []string            `json:"capabilities"`
-	Traffic      []traffic.Sample    `json:"traffic,omitempty"`
+	Version           int                 `json:"version"`
+	Release           string              `json:"release"`
+	CPU               float64             `json:"cpu"`
+	Cores             int                 `json:"cores"`
+	Load              [3]float64          `json:"load"`
+	Uptime            float64             `json:"uptime"`
+	Memory            *hostinfo.Usage     `json:"memory,omitempty"`
+	Swap              *hostinfo.Usage     `json:"swap,omitempty"`
+	Disk              *hostinfo.DiskUsage `json:"disk,omitempty"`
+	Processes         int                 `json:"processes"`
+	Hostname          string              `json:"hostname,omitempty"`
+	OS                string              `json:"os,omitempty"`
+	Kernel            string              `json:"kernel,omitempty"`
+	Arch              string              `json:"arch"`
+	Incus             incus.Info          `json:"incus"`
+	Capabilities      []string            `json:"capabilities"`
+	Traffic           []traffic.Sample    `json:"traffic,omitempty"`
+	TrafficAccounting *traffic.Status     `json:"trafficAccounting,omitempty"`
 }
 
 // reportResponse 为面板对上报的回复：上报间隔、最新版本，以及各模块的指令
@@ -77,35 +78,37 @@ type reportResponse struct {
 }
 
 type Agent struct {
-	panel    *panel.Client
-	cpu      *hostinfo.CPUSampler
-	incus    *incus.Client
-	vm       *vmlimits.Limiter
-	upgrader *upgrade.Upgrader
-	ping     *nodetest.Pinger
-	listing  *nodetest.ListingRunner
-	ipv4     *nodetest.IPv4Runner
-	inst     *instances.Reporter
-	egress   *egress.Manager
-	traffic  *traffic.Targets
-	guest    *guestexec.Runner
+	panel      *panel.Client
+	cpu        *hostinfo.CPUSampler
+	incus      *incus.Client
+	vm         *vmlimits.Limiter
+	upgrader   *upgrade.Upgrader
+	ping       *nodetest.Pinger
+	listing    *nodetest.ListingRunner
+	ipv4       *nodetest.IPv4Runner
+	inst       *instances.Reporter
+	egress     *egress.Manager
+	traffic    *traffic.Targets
+	accounting *traffic.Collector
+	guest      *guestexec.Runner
 }
 
 func New(cfg config.Config) *Agent {
 	client := panel.New(cfg)
 	inc := incus.New()
 	return &Agent{
-		panel:    client,
-		cpu:      hostinfo.NewCPUSampler(),
-		incus:    inc,
-		vm:       vmlimits.New(inc),
-		upgrader: upgrade.New(cfg.PanelURL, client.HTTP()),
-		ping:     nodetest.New(),
-		listing:  nodetest.NewListingRunner(),
-		ipv4:     nodetest.NewIPv4Runner(),
-		inst:     instances.New(),
-		egress:   egress.New(),
-		guest:    guestexec.New(),
+		panel:      client,
+		cpu:        hostinfo.NewCPUSampler(),
+		incus:      inc,
+		vm:         vmlimits.New(inc),
+		upgrader:   upgrade.New(cfg.PanelURL, client.HTTP()),
+		ping:       nodetest.New(),
+		listing:    nodetest.NewListingRunner(),
+		ipv4:       nodetest.NewIPv4Runner(),
+		inst:       instances.New(),
+		egress:     egress.New(),
+		guest:      guestexec.New(),
+		accounting: traffic.New(),
 	}
 }
 
@@ -134,7 +137,15 @@ func (a *Agent) Collect() Report {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	r.Traffic = traffic.Collect(ctx, a.incus, a.traffic)
+	if a.traffic != nil {
+		var err error
+		r.Traffic, err = a.accounting.Collect(ctx, a.incus, a.traffic)
+		r.TrafficAccounting = &traffic.Status{Scope: traffic.Scope, Ready: err == nil}
+		if err != nil {
+			r.TrafficAccounting.Error = logx.Truncate(err.Error(), 500)
+			logx.Once("public-traffic:"+err.Error(), "公网流量采集失败，暂停本次计费，内网流量不会转用网卡总量计费：%v", err)
+		}
+	}
 	return r
 }
 

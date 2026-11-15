@@ -1,11 +1,11 @@
 install_paledove_egress_tools() {
   local manager='' tool package
   local missing=() packages=()
-  for tool in ip iptables wg; do
+  for tool in ip iptables wg nft; do
     command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
   done
   [ "${#missing[@]}" -gt 0 ] || return 0
-  printf '安装智能分流依赖 / installing egress tools: %s\n' "${missing[*]}"
+  printf '安装网络与公网计费依赖 / installing network and public traffic tools: %s\n' "${missing[*]}"
   for tool in apt-get dnf yum apk; do
     if command -v "$tool" >/dev/null 2>&1; then manager=$tool; break; fi
   done
@@ -14,6 +14,7 @@ install_paledove_egress_tools() {
       ip) case "$manager" in dnf|yum) package=iproute ;; *) package=iproute2 ;; esac ;;
       iptables) package=iptables ;;
       wg) package=wireguard-tools ;;
+      nft) package=nftables ;;
     esac
     packages+=("$package")
   done
@@ -74,7 +75,7 @@ install_paledove_agent() {
     printf '[x] Agent 校验失败 / agent checksum mismatch\n' >&2
     return 1
   fi
-  install_paledove_egress_tools || printf '[!] 智能分流依赖未完整安装；启用出口时 Agent 将重试 / egress tools are incomplete; the agent will retry when enabled\n' >&2
+  install_paledove_egress_tools || printf '[!] 网络依赖未完整安装；缺少 nftables 时公网计费暂停，请补装 nftables / network tools are incomplete; public traffic accounting requires nftables\n' >&2
   # 用一次性安装令牌换取 Agent 密钥（每次安装都会生成新密钥，旧 Agent 随即失效）
   if ! conf=$(curl -fsS --max-time 30 -H "x-paledove-install-token: $token" "$panel/api/agent/install-config"); then
     rm -f "$tmp"

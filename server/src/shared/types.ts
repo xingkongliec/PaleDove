@@ -1008,6 +1008,8 @@ export interface HostReportDTO {
   incus?: { available: boolean; socket?: string; version?: string; error?: string };
   /** Agent 支持的功能 */
   capabilities?: string[];
+  /** 公网计费采集状态；未就绪时停止累计用量，避免误计内网。 */
+  trafficAccounting?: { scope: 'public-v1'; ready: boolean; error?: string };
   /** 上报来源 IP（面板看到的心跳地址） */
   ip?: string;
   /** 在离线阈值（max(3 × 上报间隔, 60 秒)）内有上报；离线时仍返回最后一次上报 */

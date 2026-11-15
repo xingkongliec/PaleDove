@@ -12,7 +12,7 @@
 | `agent-install.sh` | 独立 Agent 安装入口 |
 | `agent-setup.sh` | Incus 与独立 Agent 共用的下载、校验、配置与 systemd 安装函数 |
 
-Agent 安装脚本在校验下载文件后、兑换安装令牌前检查智能分流依赖，按系统包管理器补装 `iproute2`（RPM 系为 `iproute`）、`iptables`、`wireguard-tools`，并为 systemd 服务设置完整的系统命令 PATH。依赖安装失败会明确提示，Agent 其他功能继续可用；0.8.1 起 Agent 在启用出口时也会按需补装依赖并重试失败配置，适用于仅升级二进制的已有宿主机。
+Agent 安装脚本在校验下载文件后、兑换安装令牌前检查网络依赖，按系统包管理器补装 `iproute2`（RPM 系为 `iproute`）、`iptables`、`wireguard-tools`、`nftables`，并为 systemd 服务设置完整的系统命令 PATH。依赖安装失败会明确提示，Agent 其他功能继续可用；0.8.1 起 Agent 在启用出口时也会按需补装出口依赖并重试失败配置。0.8.3 起公网计费依赖 Linux 5.16+ 与 nftables 1.0.1+，仅升级二进制的旧宿主机需补装 nftables；采集失败时停止累计计费用量，绝不以网卡总量误计内网。
 
 `@@PALEDOVE_变量名@@` 是面板注入的占位符，`${变量名}` 是 shell 表达式。不要直接执行原始模板，应执行面板生成的下载命令。参数转义和注入由 `src/services/agent/install-script.ts` 与 `src/install-template.ts` 负责；新增占位符时也要更新对应的参数映射。参数映射或后端逻辑发生变动时仍需构建并重启后端。
 

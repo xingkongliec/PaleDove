@@ -191,6 +191,12 @@ export function HostStatusCard({ node, res }: { node: NodeDTO; res: UseQueryResu
         <Empty title={t('nodeDetail.host.emptyTitle')} description={t('nodeDetail.host.emptyDesc')} />
       ) : !host ? null : (
         <div className="space-y-4 p-4 sm:p-5">
+          {(!host.capabilities?.includes('public-traffic-v1') || !host.trafficAccounting?.ready) && (
+            <Alert tone="warning">
+              {t(host.capabilities?.includes('public-traffic-v1') ? 'nodeDetail.host.trafficNotReady' : 'nodeDetail.host.trafficUpgrade')}
+              {host.trafficAccounting?.error && <div className="mt-1 break-words text-xs">{host.trafficAccounting.error}</div>}
+            </Alert>
+          )}
           {/* 状态行：版本、功能；右侧为 Incus 检测与心跳信息（还没有上报时整块不显示） */}
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-line pb-4">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">

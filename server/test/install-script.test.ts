@@ -107,7 +107,7 @@ INSTALLED=0
 command() {
   if [ "$1" = -v ]; then
     case "$2" in
-      wg) [ "$INSTALLED" = 1 ] ;;
+      wg|nft) [ "$INSTALLED" = 1 ] ;;
       ip|iptables) [ "$INSTALLED" = 1 ] || [ '${allMissing}' = false ] ;;
       apt-get) return 0 ;;
       *) return 1 ;;
@@ -125,7 +125,7 @@ install_paledove_egress_tools
     expect(result.status, result.stderr).toBe(0);
     const installs = result.stdout.split('\n').filter((line) => line.startsWith('PACKAGE:') && line.includes(' install '));
     expect(installs).toHaveLength(1);
-    expect(installs[0]).toContain(allMissing ? 'iproute2 iptables wireguard-tools' : 'wireguard-tools');
+    expect(installs[0]).toContain(allMissing ? 'iproute2 iptables wireguard-tools nftables' : 'wireguard-tools nftables');
     expect(result.stdout).toContain('update -qq');
   });
 

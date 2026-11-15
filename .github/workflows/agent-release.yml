@@ -53,6 +53,14 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         working-directory: agent
         run: go test ./...
+      - name: Test public traffic accounting in isolated network namespaces
+        if: steps.version.outputs.publish == 'true'
+        working-directory: agent
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nftables iproute2 iputils-ping util-linux
+          sudo env PALEDOVE_TRAFFIC_NETNS_TEST=1 "$(command -v go)" test -count=1 ./internal/traffic -run '^TestPublicTrafficNetworkNamespace$' -v
       - name: Build release assets
         if: steps.version.outputs.publish == 'true'
         run: node agent/scripts/build.mjs --required --release

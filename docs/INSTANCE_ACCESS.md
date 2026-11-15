@@ -26,9 +26,21 @@ Incus `eth1` routed NIC 的 `ipv6.address` 配置主地址，`ipv6.routes` 配�
 
 宿主机 Agent 0.8.0 起提供 `host-traffic` 和 `guest-exec` 能力，仍为独立的 Go 二进制，不要求在虚拟机中安装面板 Agent。
 
-流量通过本机 Incus 读取 eth0 / eth1 的 `volatile.<device>.host_name`，再读取 Linux `/sys/class/net/<host-interface>/statistics/`。宿主机 TX 对应实例入站，RX 对应实例出站。VPC 与系统其他网卡不计费。每次心跳采样并上报全部受管实例，面板在数据库事务内同时更新基线、周期用量与每日汇总；首次切换来源只建基线，不重复计入旧来源的累计值。周期重置保留计数基线。boot-id、实例 UUID、ifindex 共同识别网卡代次。
+**Agent 0.8.3 起只累计公网通信**，使用签名心跳中的 `public-traffic-v1` 能力和 `public-v1` 样本口径。通过本机 Incus 找到 eth0 / eth1 的宿主机 veth / tap，在 nftables 的 netdev ingress / egress 上分别按远端目标 / 来源地址计数；容器、NAT 虚拟机和独立 IPv4 / IPv6 虚拟机共用同一口径，不要求虚拟机内运行 incus-agent。
 
-开始使用宿主机计数后，Agent 暂时离线不会回退到另一来源的累计值。恢复后仍存在的网卡可按原基线补算；已销毁网卡最后一段未采集流量无法恢复。旧版 Agent 保持原 Incus 统计方式，需要升级才能获得独立采集能力。
+以下通信不消耗流量额度：
+
+- RFC1918 私网、100.64.0.0/10 共享地址、IPv6 ULA、回环、链路本地、组播与保留地址。
+- 宿主机自身地址、节点 NAT 网段、节点分配的 IPv6 网段，以及同节点已知实例的私网 / 公网地址和路由网段。
+- VPC 网卡 eth2 / vpc0，及实例内部的 docker0、其他虚拟网卡。
+
+只管理自有的 `netdev paledove_traffic` 表，规则仅计数，不添加丢包或放行规则，不修改 Incus、防火墙与出口转发规则。排除地址集合原子更新，保留已存在的命名计数器。面板在同一事务中更新计数基线、周期用量和每日汇总，四种计费方向及超额处理均使用该公网用量。首次从旧来源切换只建立新基线，周期重置保留基线；Agent 重启沿用内核计数，宿主机重启 / 网卡重建 / 计数表重建通过独立代次处理。
+
+宿主机需 **Linux 5.16+、nftables 1.0.1+**（建议 Debian 12 / Ubuntu 24.04 或使用较新内核），Agent 安装脚本会补装 `nftables`。仅自动升级二进制的旧宿主机需要补装依赖，例如 Debian / Ubuntu 执行 `apt-get update && apt-get install -y nftables`，或重新执行 Agent 安装脚本。不需要启用 nftables 系统服务，不要用默认 nftables 配置刷新全部防火墙。
+
+**旧 Agent、缺少依赖、内核不支持或采集失败时暂停累计计费用量，不回退到 Incus 或 sysfs 的整张网卡总量**；管理后台的宿主机状态显示暂停原因，Agent 日志记录错误。Agent 暂时离线期间，内核中仍存在的计数器继续累计，恢复后补算；已销毁网卡最后一段未采集流量无法恢复。监控网速仍可展示主网卡总收发量，不能用它直接推算计费用量。
+
+此口径依据实例网卡上的远端 IP。Caddy、用户态 IPv6 到 IPv4 转发、SOCKS / HTTP 中转等若将远端转换为宿主机或私网地址，相应内部链路不计费；不从无法区分内外网的链路补算公网量。历史数据只有总字节数，无法可靠拆出此前的内网用量，因此升级不会自动清空或重写历史账目。
 
 命令正常优先使用 Incus exec。仅当错误表明虚拟机 incus-agent 不可用，才创建有期限的 SSH 任务：
 

@@ -2,7 +2,7 @@ import type { InstanceStateDTO, MetricPoint, NodeUsageDTO, TrafficMode } from '.
 import { getIncus, type IncusInstanceState } from '../incus/index.ts';
 import { prisma, Prisma, type Instance, type Node } from '../lib/prisma.ts';
 import { redis, withLock } from '../lib/redis.ts';
-import { dayjs, nodeTrafficPeriod, startOfDayUTC } from '../lib/time.ts';
+import { dayjs, nodeTrafficPeriod } from '../lib/time.ts';
 import { config } from '../config.ts';
 import { trafficUsedBytes } from './serializers.ts';
 import { enqueueTask } from './tasks.ts';
@@ -18,8 +18,8 @@ const seriesLength = () => Math.ceil((24 * 3600) / config.METRICS_INTERVAL_SEC);
 const GiB = 1024 ** 3;
 
 /**
- * 计费网卡的流量计数器之和：只统计主网卡 eth0 与公网 IPv6 网卡 eth1（容器内按网卡名，虚拟机内按 MAC 识别）。
- * VPC 内网网卡与实例内部的虚拟网卡（docker0、veth 等）不计费，避免内网流量和容器内转发被重复计入。
+ * 主网卡的监控计数器之和（含主网卡上的内网通信），只能用于网速监控，不能作为计费用量。
+ * 排除 VPC 内网网卡与实例内部虚拟网卡，避免网络监控重复统计。
  * 没有 MAC 记录的旧实例只排除回环与 VPC 网卡。
  */
 export function sumCounters(state: IncusInstanceState | null, inst: Pick<Instance, 'macAddress'>): { rx: number; tx: number } {
@@ -56,7 +56,7 @@ function delta(current: number, last: bigint): bigint {
   return cur >= last ? cur - last : cur;
 }
 
-/** 采集单个节点上所有实例的资源占用，并累计流量 */
+/** 采集资源与网速监控；计费只接收 Agent 过滤后的公网计数。 */
 export async function collectNode(node: Node): Promise<void> {
   const incus = await getIncus(node);
   const remote = await incus.listInstances();
@@ -66,7 +66,6 @@ export async function collectNode(node: Node): Promise<void> {
     include: { tasks: { where: { status: { in: ['QUEUED', 'RUNNING'] } }, take: 1 } },
   });
   const now = Date.now();
-  const today = startOfDayUTC();
 
   for (const row of instances) await withLock(`traffic:${row.id}`, 10_000, async () => {
     const inst = await prisma.instance.findUniqueOrThrow({ where: { id: row.id }, include: { tasks: { where: { status: { in: ['QUEUED', 'RUNNING'] } }, take: 1 } } });
@@ -76,10 +75,9 @@ export async function collectNode(node: Node): Promise<void> {
     const state = r.state;
     const running = state?.status === 'Running';
     const { rx, tx } = sumCounters(state, inst);
-    const hostSource = (inst.trafficCounters as { source?: string } | null)?.source === 'host';
-    const host = hostSource ? await hostTrafficRates(inst.id) : null;
-    const dRx = running && !hostSource ? delta(rx, inst.lastRxCounter) : 0n;
-    const dTx = running && !hostSource ? delta(tx, inst.lastTxCounter) : 0n;
+    const host = await hostTrafficRates(inst.id);
+    const dRx = running ? delta(rx, inst.lastRxCounter) : 0n;
+    const dTx = running ? delta(tx, inst.lastTxCounter) : 0n;
 
     // CPU 使用率：与上一次采样的 CPU 时间差 / 墙钟时间差 / 核数
     const lastRaw = await redis.get(LAST_KEY(inst.id));
@@ -94,7 +92,7 @@ export async function collectNode(node: Node): Promise<void> {
       rxRate = Number(dRx) / dtSec;
       txRate = Number(dTx) / dtSec;
     }
-    if (hostSource) { rxRate = host?.rxRate ?? 0; txRate = host?.txRate ?? 0; }
+    if (host) { rxRate = host.rxRate ?? 0; txRate = host.txRate ?? 0; }
     await redis.set(LAST_KEY(inst.id), JSON.stringify({ t: now, cpu: cpuNs }), 'EX', 3600);
 
     if (running) {
@@ -112,15 +110,6 @@ export async function collectNode(node: Node): Promise<void> {
       lastRxCounter: BigInt(Math.floor(rx)),
       lastTxCounter: BigInt(Math.floor(tx)),
     };
-    if (dRx > 0n || dTx > 0n) {
-      data.trafficIn = { increment: dRx };
-      data.trafficOut = { increment: dTx };
-      await prisma.trafficDaily.upsert({
-        where: { instanceId_date: { instanceId: inst.id, date: today } },
-        create: { instanceId: inst.id, date: today, rx: dRx, tx: dTx },
-        update: { rx: { increment: dRx }, tx: { increment: dTx } },
-      });
-    }
     const v6 = firstGlobal(state, 'inet6');
     if (v6 && v6 !== inst.ipv6) data.ipv6 = v6;
 
@@ -214,12 +203,9 @@ export async function getLiveState(
       addresses.push({ family: a.family, address: a.address, scope: a.scope });
     }
   }
-  // 本期流量：与每分钟统计的算法一致，加上还没统计进去的计数器增量
-  const running = state.status === 'Running';
-  const hostSource = (inst.trafficCounters as { source?: string } | null)?.source === 'host';
-  const host = hostSource ? await hostTrafficRates(inst.id) : null;
-  const trafficIn = inst.trafficIn + (running && !hostSource ? delta(rx, inst.lastRxCounter) : 0n);
-  const trafficOut = inst.trafficOut + (running && !hostSource ? delta(tx, inst.lastTxCounter) : 0n);
+  // 网卡总量包含内网，实时计费值只展示已入账的公网流量，不追加未经分类的增量。
+  const { trafficIn, trafficOut } = inst;
+  const host = await hostTrafficRates(inst.id);
   const dto: InstanceStateDTO = {
     status: state.status,
     cpuPercent: state.status === 'Running' ? cpuPercent : 0,
@@ -229,10 +215,10 @@ export async function getLiveState(
     diskUsage: rootDiskUsage(state),
     diskTotal: inst.disk * GiB,
     processes: Math.max(0, state.processes ?? 0),
-    netRx: hostSource ? host?.rx ?? 0 : rx,
-    netTx: hostSource ? host?.tx ?? 0 : tx,
-    netRxRate: state.status === 'Running' ? hostSource ? host?.rxRate ?? null : netRxRate : 0,
-    netTxRate: state.status === 'Running' ? hostSource ? host?.txRate ?? null : netTxRate : 0,
+    netRx: host?.rx ?? rx,
+    netTx: host?.tx ?? tx,
+    netRxRate: state.status === 'Running' ? host?.rxRate ?? netRxRate : 0,
+    netTxRate: state.status === 'Running' ? host?.txRate ?? netTxRate : 0,
     trafficIn: Number(trafficIn),
     trafficOut: Number(trafficOut),
     trafficUsed: Number(trafficUsedBytes({ trafficIn, trafficOut, trafficMode: inst.trafficMode })),

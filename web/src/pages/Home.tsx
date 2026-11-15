@@ -3,7 +3,7 @@ import { ArrowRight, ArrowUpRight, CircleCheck, Gift, ShoppingCart, Store, Ticke
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { isVmType, type BillingCycle, type ImageDTO, type MarketListingDTO, type PlanDTO, type ProductDTO } from '../shared/index';
-import { GalaxyParticles } from '@/components/landing/GalaxyParticles';
+import { VerticalParticles } from '@/components/landing/VerticalParticles';
 import { Reveal } from '@/components/landing/motion';
 import { PublicFooter, PublicHeader, scrollToId } from '@/components/landing/PublicShell';
 import { CountryFlag } from '@/components/country';
@@ -483,7 +483,7 @@ export default function HomePage() {
 
       {/* ───────── 首屏 ───────── */}
       <section id="top" className="relative isolate flex min-h-dvh items-center overflow-hidden border-b border-line">
-        <GalaxyParticles className="absolute inset-y-0 right-0 -z-10 h-full w-full opacity-45 sm:opacity-70 lg:w-[66%] lg:opacity-100 [mask-image:linear-gradient(90deg,transparent,#000_24%)]" />
+        <VerticalParticles className="absolute inset-y-0 right-0 -z-10 h-full w-full opacity-35 sm:opacity-65 lg:w-[66%] lg:opacity-100 [mask-image:linear-gradient(90deg,transparent,#000_28%)]" />
         <div className="mx-auto w-full max-w-7xl px-4 pt-28 pb-28 sm:px-6">
           <div className="max-w-2xl">
             <a href="#servers" onClick={goTo('servers')} className="page-enter inline-flex items-center gap-2.5 rounded-full border border-line bg-surface/70 py-1.5 pr-3 pl-3.5 text-[13px] text-fg-2 backdrop-blur transition-colors hover:border-line-strong hover:text-fg">
